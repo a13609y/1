@@ -1,6 +1,5 @@
 {
   "name": "01Country",
-  "author": "a13609y",
   "icons": [
     {
       "name": "亚麻色",
@@ -41,6 +40,10 @@
     {
       "name": "黑毛 6",
       "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/黑毛 6.png"
+    },
+    {
+      "name": "黑毛 7",
+      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/黑毛 7.png"
     },
     {
       "name": "黑毛",

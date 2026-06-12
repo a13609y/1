@@ -40,7 +40,6 @@ jobs:
 
             out = {
               "name": folder,
-              "author": "a13609y",
               "icons": icons
             }
 

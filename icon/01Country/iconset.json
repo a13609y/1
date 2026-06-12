@@ -3,51 +3,55 @@
   "icons": [
     {
       "name": "亚麻色",
-      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/亚麻色.png"
+      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/%E4%BA%9A%E9%BA%BB%E8%89%B2.png"
     },
     {
       "name": "白毛 2",
-      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/白毛 2.png"
+      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/%E7%99%BD%E6%AF%9B%202.png"
     },
     {
       "name": "白毛 3",
-      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/白毛 3.png"
+      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/%E7%99%BD%E6%AF%9B%203.png"
     },
     {
       "name": "白毛 4",
-      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/白毛 4.png"
+      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/%E7%99%BD%E6%AF%9B%204.png"
     },
     {
       "name": "白毛",
-      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/白毛.png"
+      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/%E7%99%BD%E6%AF%9B.png"
     },
     {
       "name": "白毛圆形",
-      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/白毛圆形.png"
+      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/%E7%99%BD%E6%AF%9B%E5%9C%86%E5%BD%A2.png"
     },
     {
       "name": "紫毛",
-      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/紫毛.png"
+      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/%E7%B4%AB%E6%AF%9B.png"
     },
     {
       "name": "黑毛 2",
-      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/黑毛 2.png"
+      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/%E9%BB%91%E6%AF%9B%202.png"
     },
     {
       "name": "黑毛 4",
-      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/黑毛 4.png"
+      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/%E9%BB%91%E6%AF%9B%204.png"
     },
     {
       "name": "黑毛 6",
-      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/黑毛 6.png"
+      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/%E9%BB%91%E6%AF%9B%206.png"
     },
     {
       "name": "黑毛 7",
-      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/黑毛 7.png"
+      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/%E9%BB%91%E6%AF%9B%207.png"
     },
     {
       "name": "黑毛",
-      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/黑毛.png"
+      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/%E9%BB%91%E6%AF%9B.png"
+    },
+    {
+      "name": "黑毛8",
+      "url": "https://raw.githubusercontent.com/a13609y/1/main/icon/01Country/%E9%BB%91%E6%AF%9B8.png"
     }
   ]
 }

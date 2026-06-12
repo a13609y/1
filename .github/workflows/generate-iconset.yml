@@ -17,6 +17,7 @@ jobs:
         run: |
           python3 << 'EOF'
           import os, json
+          from urllib.parse import quote
 
           repo = "a13609y/1"
           branch = "main"
@@ -32,7 +33,9 @@ jobs:
             for fname in sorted(os.listdir(folder_path)):
               if os.path.splitext(fname)[1].lower() in img_exts:
                 name = os.path.splitext(fname)[0]
-                url = f"https://raw.githubusercontent.com/{repo}/{branch}/{icon_root}/{folder}/{fname}"
+                encoded = quote(fname, safe='')
+                encoded_folder = quote(folder, safe='')
+                url = f"https://raw.githubusercontent.com/{repo}/{branch}/{icon_root}/{encoded_folder}/{encoded}"
                 icons.append({"name": name, "url": url})
 
             if not icons:

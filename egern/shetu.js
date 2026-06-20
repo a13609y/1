@@ -4,18 +4,39 @@
 // @Type         generic
 // @Author       Cuttlefish (改编为 Egern 版本)
 // @WebURL       https://api.lolicon.app/#/setu
-// @Attention    环境变量：API_KEY（可选）、R18（0/1/2，0 非 r18，1 是 r18 2 是混合，默认2）
-//               KEYWORDS：多个标签用竖线分隔，每次随机选一个
-//               例如：初音ミク|エミリア|フォンテーヌ
 // ==/UserScript==
 
-// 每个尺寸各自维护历史记录，最多保留 HISTORY_MAX 条
-const HISTORY_MAX = 50;
+// ============================================================
+// 环境变量说明（在 Egern 脚本 → Env 中填写）
+// ============================================================
+// API_KEY    可选  你的 lolicon API Key，不填也可使用但有次数限制
+//            示例：xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+//
+// R18        可选  是否包含 R18 内容  默认：2
+//            0 = 仅非 R18
+//            1 = 仅 R18
+//            2 = 混合（随机）
+//
+// KEYWORDS   可选  搜索标签，多个标签用 | 分隔，每次随机选一个
+//            必须使用 Pixiv 日文原始标签
+//            示例：初音ミク|エミリア|雷電将軍
+//            不填则随机返回任意图片
+//
+// BATCH      可选  每次向 API 请求的图片数量  默认：20  范围：1~20
+//            数量越多，本地 URL 池越大，刷新时重复率越低
+//            示例：20
+//
+// COOLDOWN   可选  两次向 API 发起请求的最小间隔（分钟）  默认：5
+//            冷却期内刷新小组件直接使用已缓存的图片，极速显示
+//            示例：5
+// ============================================================
 
 export default async function(ctx) {
-  const apiKey   = ctx.env.API_KEY   || '';
-  const r18      = ctx.env.R18       || '2';
-  const keywords = ctx.env.KEYWORDS  || '';
+  const apiKey   = ctx.env.API_KEY  || '';
+  const r18      = ctx.env.R18      || '2';
+  const keywords = ctx.env.KEYWORDS || '';
+  const batch    = Math.min(20, Math.max(1, parseInt(ctx.env.BATCH    || '20')));
+  const cooldown = Math.max(1,            parseInt(ctx.env.COOLDOWN   || '5')) * 60 * 1000;
 
   // 多标签随机选一个
   const tagList = keywords.split('|').map(t => t.trim()).filter(Boolean);
@@ -25,6 +46,15 @@ export default async function(ctx) {
 
   const family = ctx.widgetFamily;
 
+  // 锁屏小组件提前返回，不需要走图片逻辑
+  if (family === 'accessoryRectangular' || family === 'accessoryCircular') {
+    return { type: 'widget', children: [{ type: 'image', src: 'sf-symbol:photo.artframe', width: 28, height: 28 }] };
+  }
+  if (family === 'accessoryInline') {
+    return { type: 'widget', children: [{ type: 'text', text: '每日色图', maxLines: 1 }] };
+  }
+
+  // 按小组件宽高比筛选图片方向
   let aspectRatio;
   if (family === 'systemMedium') {
     aspectRatio = 'gt1.6lt2.4';
@@ -34,95 +64,151 @@ export default async function(ctx) {
     aspectRatio = 'gt0.8lt1.3';
   }
 
-  const imageSize = 'small';
+  // 按小组件尺寸选图片规格
+  const imageSize = (family === 'systemSmall') ? 'small' : 'regular';
 
-  // 读取该尺寸的历史 pid 列表
-  const historyKey = `setu_history_${family}`;
-  let history = [];
-  try { history = JSON.parse(ctx.storage.get(historyKey) || '[]'); } catch (_) {}
+  // 各尺寸独立的存储 key
+  const urlPoolKey  = `setu_urls_${family}`;
+  const indexKey    = `setu_index_${family}`;
+  const cooldownKey = `setu_cooldown_${family}`;
+  const configKey   = `setu_config_${family}`;
 
-  let imageBase64 = null;
-  let picUrl = '';
+  // 读取本地 URL 列表和指针
+  let urlPool = [];
+  try { urlPool = JSON.parse(ctx.storage.get(urlPoolKey) || '[]'); } catch (_) {}
+  let index = parseInt(ctx.storage.get(indexKey) || '0');
 
-  try {
-    // 一次多拉 20 张，从中找出没看过的
-    const body = {
-      r18: parseInt(r18),
-      num: 3,
-      size: [imageSize],
-      aspectRatio: [aspectRatio]
-    };
-    if (apiKey)  body.apikey = apiKey;
-    if (keyword) body.tag = [[keyword]];
+  const lastRequest  = parseInt(ctx.storage.get(cooldownKey) || '0');
+  const expired      = (Date.now() - lastRequest) >= cooldown;
+  const configSig    = `${batch}|${r18}|${keyword}|${imageSize}|${aspectRatio}`;
+  const configChanged = configSig !== (ctx.storage.get(configKey) || '');
 
-    const resp = await ctx.http.post('https://api.lolicon.app/setu/v2', {
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15'
-      },
-      body: JSON.stringify(body)
-    });
-    const obj = await resp.json();
-
-    if (obj.error) throw new Error(obj.error);
-    if (!obj.data || obj.data.length === 0) throw new Error('No data');
-
-    // 优先选没看过的，实在全看过了就从历史最久远的里随机选
-    const historySet = new Set(history);
-    const fresh = obj.data.filter(p => !historySet.has(p.pid));
-    const pool  = fresh.length > 0 ? fresh : obj.data;
-    const pic   = pool[Math.floor(Math.random() * pool.length)];
-
-    // 更新历史记录（队列，超出上限从头删）
-    history = history.filter(id => id !== pic.pid);  // 去重
-    history.push(pic.pid);
-    if (history.length > HISTORY_MAX) history = history.slice(-HISTORY_MAX);
-    ctx.storage.set(historyKey, JSON.stringify(history));
-
-    picUrl = pic.urls?.[imageSize] || pic.urls?.original || '';
-
-    const imgResp = await ctx.http.get(picUrl, {
-      headers: { 'Referer': 'https://www.pixiv.net/' }
-    });
-    const buffer = await imgResp.arrayBuffer();
-    const bytes = new Uint8Array(buffer);
-    let binary = '';
-    for (let i = 0; i < bytes.byteLength; i++) {
-      binary += String.fromCharCode(bytes[i]);
+  if (expired || configChanged) {
+    // 配置变了或冷却到期：清理旧图片缓存，请求新一批
+    for (let i = 0; i < urlPool.length; i++) {
+      ctx.storage.delete(`setu_img_${family}_${i}`);
     }
-    imageBase64 = btoa(binary);
 
-  } catch (e) {
-    return {
-      type: 'widget',
-      backgroundColor: '#1C1C1E',
-      padding: 16,
-      gap: 8,
-      children: [
-        { type: 'image', src: 'sf-symbol:exclamationmark.triangle.fill', color: '#FF9F0A', width: 24, height: 24 },
-        { type: 'text', text: '加载失败', font: { size: 'headline', weight: 'bold' }, textColor: '#FFFFFF' },
-        { type: 'text', text: e.message || '请求失败', font: { size: 'caption1' }, textColor: '#FFFFFF88', maxLines: 3 }
-      ]
-    };
+    try {
+      const body = {
+        r18: parseInt(r18),
+        num: batch,
+        size: [imageSize],
+        aspectRatio: [aspectRatio]
+      };
+      if (apiKey)  body.apikey = apiKey;
+      if (keyword) body.tag = [[keyword]];
+
+      const resp = await ctx.http.post('https://api.lolicon.app/setu/v2', {
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15'
+        },
+        body: JSON.stringify(body)
+      });
+      const obj = await resp.json();
+
+      if (obj.error) throw new Error(obj.error);
+      if (!obj.data || obj.data.length === 0) throw new Error('No data');
+
+      const newUrls = obj.data
+        .map(pic => pic.urls?.[imageSize] || pic.urls?.original || '')
+        .filter(Boolean);
+
+      if (newUrls.length > 0) {
+        urlPool = newUrls;
+        index = 0;
+        ctx.storage.set(urlPoolKey, JSON.stringify(urlPool));
+        ctx.storage.set(indexKey, '0');
+        ctx.storage.set(cooldownKey, String(Date.now()));
+        ctx.storage.set(configKey, configSig);
+      }
+
+    } catch (e) {
+      if (urlPool.length === 0) return buildErrorWidget(e.message || '请求失败');
+    }
   }
 
-  // 锁屏小组件
-  if (family === 'accessoryRectangular') {
-    return { type: 'widget', children: [{ type: 'image', src: 'sf-symbol:photo.artframe', width: 28, height: 28 }] };
-  }
-  if (family === 'accessoryCircular') {
-    return { type: 'widget', children: [{ type: 'image', src: 'sf-symbol:photo.artframe', width: 28, height: 28 }] };
-  }
-  if (family === 'accessoryInline') {
-    return { type: 'widget', children: [{ type: 'text', text: '每日色图', maxLines: 1 }] };
+  if (urlPool.length === 0) return buildErrorWidget('暂无图片');
+
+  // 指针越界回到开头，同时刷新冷却避免立刻再次请求
+  if (index >= urlPool.length) {
+    index = 0;
+    ctx.storage.set(cooldownKey, String(Date.now()));
   }
 
-  // 主屏幕小组件：纯图片，无文字
-  return {
+  const picUrl     = urlPool[index];
+  const nextIndex  = (index + 1) % urlPool.length;
+  const nextUrl    = urlPool[nextIndex];
+
+  // 指针前进
+  ctx.storage.set(indexKey, String(index + 1));
+
+  // 当前图片缓存检查
+  const imgCacheKey = `setu_img_${family}_${index}`;
+  const imgCache    = ctx.storage.getJSON(imgCacheKey);
+
+  let base64;
+
+  if (imgCache?.url === picUrl && imgCache?.base64) {
+    // 缓存命中，直接用
+    base64 = imgCache.base64;
+  } else {
+    // 缓存未命中，下载当前图片
+    try {
+      base64 = await downloadBase64(ctx, picUrl);
+      ctx.storage.setJSON(imgCacheKey, { url: picUrl, base64 });
+    } catch (e) {
+      return buildErrorWidget('图片下载失败');
+    }
+  }
+
+  // 渲染当前图片
+  const result = {
     type: 'widget',
-    backgroundImage: `data:image/jpeg;base64,${imageBase64}`,
+    backgroundImage: `data:image/jpeg;base64,${base64}`,
     padding: 0,
     url: picUrl,
     children: []
+  };
+
+  // 预下载下一张（异步，不阻塞渲染）
+  const nextCacheKey = `setu_img_${family}_${nextIndex}`;
+  const nextCache    = ctx.storage.getJSON(nextCacheKey);
+  if (!nextCache || nextCache.url !== nextUrl) {
+    // 不 await，让它在后台跑，当前帧已经可以返回了
+    downloadBase64(ctx, nextUrl)
+      .then(b64 => ctx.storage.setJSON(nextCacheKey, { url: nextUrl, base64: b64 }))
+      .catch(() => {});
+  }
+
+  return result;
+}
+
+// 下载图片并返回 base64 字符串
+async function downloadBase64(ctx, url) {
+  const imgResp = await ctx.http.get(url, {
+    headers: { 'Referer': 'https://www.pixiv.net/' }
+  });
+  const buffer = await imgResp.arrayBuffer();
+  const bytes  = new Uint8Array(buffer);
+  let binary   = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+function buildErrorWidget(message) {
+  return {
+    type: 'widget',
+    backgroundColor: '#1C1C1E',
+    padding: 16,
+    gap: 8,
+    children: [
+      { type: 'image', src: 'sf-symbol:exclamationmark.triangle.fill', color: '#FF9F0A', width: 24, height: 24 },
+      { type: 'text', text: '加载失败', font: { size: 'headline', weight: 'bold' }, textColor: '#FFFFFF' },
+      { type: 'text', text: message, font: { size: 'caption1' }, textColor: '#FFFFFF88', maxLines: 3 }
+    ]
   };
 }

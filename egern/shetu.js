@@ -4,7 +4,7 @@
 // @Type         generic
 // @Author       Cuttlefish (改编为 Egern 版本)
 // @WebURL       https://api.lolicon.app/#/setu
-// @Attention    环境变量：API_KEY（可选）、R18（0/1/2，默认2）
+// @Attention    环境变量：API_KEY（可选）、R18（0/1/2，0 非 r18，1 是 r18 2 是混合 默认2）
 //               KEYWORDS：多个标签用竖线分隔，每次随机选一个
 //               例如：初音ミク|エミリア|フォンテーヌ
 // ==/UserScript==

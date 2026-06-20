@@ -48,7 +48,7 @@ export default async function(ctx) {
     // 一次多拉 20 张，从中找出没看过的
     const body = {
       r18: parseInt(r18),
-      num: 20,
+      num: 3,
       size: [imageSize],
       aspectRatio: [aspectRatio]
     };

@@ -4,7 +4,7 @@
 // @Type         generic
 // @Author       Cuttlefish (改编为 Egern 版本)
 // @WebURL       https://api.lolicon.app/#/setu
-// @Attention    环境变量：API_KEY（可选）、R18（0/1/2，默认2）、KEYWORD（可选）
+// @Attention    环境变量：API_KEY（你的 Lolicon API Key 可选，没有也可以留空）、R18（0：非R18图片，1：仅R18，图片2：混合，默认2）、KEYWORD（可选按标签筛选图片，可留空）
 // ==/UserScript==
 
 export default async function(ctx) {

@@ -4,25 +4,35 @@
 // @Type         generic
 // @Author       Cuttlefish (改编为 Egern 版本)
 // @WebURL       https://api.lolicon.app/#/setu
-// @Attention    环境变量：API_KEY（你的 Lolicon API Key 可选，没有也可以留空）、R18（0：非R18图片，1：仅R18，图片2：混合，默认2）、KEYWORD（可选按标签筛选图片，可留空）
+// @Attention    环境变量：API_KEY（可选）、R18（0/1/2，0 非 r18，1 是 r18 2 是混合，默认2）
+//               KEYWORDS：多个标签用竖线分隔，每次随机选一个
+//               例如：初音ミク|エミリア|フォンテーヌ
 // ==/UserScript==
 
 export default async function(ctx) {
-  const apiKey  = ctx.env.API_KEY  || '';
-  const r18     = ctx.env.R18      || '2';
-  const keyword = ctx.env.KEYWORD  || '';
+  const apiKey   = ctx.env.API_KEY   || '';
+  const r18      = ctx.env.R18       || '2';
+  const keywords = ctx.env.KEYWORDS  || '';
+
+  // 多标签随机选一个：用 | 分隔，过滤空项
+  const tagList = keywords.split('|').map(t => t.trim()).filter(Boolean);
+  const keyword = tagList.length > 0
+    ? tagList[Math.floor(Math.random() * tagList.length)]
+    : '';
 
   const family = ctx.widgetFamily;
 
-  // 按各尺寸小组件的实际宽高比筛选图片，减少 cover 裁剪量
-  // small ≈ 1:1，medium ≈ 2:1，large ≈ 1:1 偏竖，锁屏不显示图
+  // 按各尺寸小组件的实际宽高比（宽/高）筛选图片，减少 cover 裁剪量
+  // systemSmall  约 1:1  → 宽高比约 1.0
+  // systemMedium 约 2:1  → 宽高比约 2.0（横图）
+  // systemLarge  约 1:2  → 宽高比约 0.5（竖图）
   let aspectRatio;
   if (family === 'systemMedium') {
-    aspectRatio = 'gt1.6lt2.4';   // 横图
+    aspectRatio = 'gt1.6lt2.4';    // 横图
   } else if (family === 'systemLarge' || family === 'systemExtraLarge') {
-    aspectRatio = 'gt0.6lt1.2';   // 偏竖或正方形
+    aspectRatio = 'gt0.4lt0.65';   // 竖图，匹配 large 约 1:2 的比例
   } else {
-    aspectRatio = 'gt0.8lt1.3';   // small：接近正方形
+    aspectRatio = 'gt0.8lt1.3';    // small：接近正方形
   }
 
   // 统一用 small 规格（540px 等比缩放，非方形裁剪），画质和体积平衡

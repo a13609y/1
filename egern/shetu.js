@@ -4,7 +4,7 @@
 // @Type         generic
 // @Author       Cuttlefish (改编为 Egern 版本)
 // @WebURL       https://api.lolicon.app/#/setu
-// @Attention    环境变量：API_KEY（可选）、R18（0/1/2，0 非 r18，1 是 r18 2 是混合，默认2）
+// @Attention    环境变量：API_KEY（可选）、R18（0/1/2，默认2）
 //               KEYWORDS：多个标签用竖线分隔，每次随机选一个
 //               例如：初音ミク|エミリア|フォンテーヌ
 // ==/UserScript==
@@ -42,14 +42,22 @@ export default async function(ctx) {
   let picUrl = '';
 
   try {
-    let url = `https://api.lolicon.app/setu/v2?r18=${r18}&num=1&size=${imageSize}&aspectRatio=${aspectRatio}`;
-    if (apiKey)  url += `&apikey=${encodeURIComponent(apiKey)}`;
-    if (keyword) url += `&tag=${encodeURIComponent(keyword)}`;
+    // lolicon v2 建议用 POST + JSON，tag 为二维数组：[[tag]] 表示 OR 匹配单个标签
+    const body = {
+      r18: parseInt(r18),
+      num: 1,
+      size: [imageSize],
+      aspectRatio: [aspectRatio]
+    };
+    if (apiKey)  body.apikey = apiKey;
+    if (keyword) body.tag = [[keyword]];  // [[tag]] = 必须含此标签
 
-    const resp = await ctx.http.get(url, {
+    const resp = await ctx.http.post('https://api.lolicon.app/setu/v2', {
       headers: {
+        'Content-Type': 'application/json',
         'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15'
-      }
+      },
+      body: JSON.stringify(body)
     });
     const obj = await resp.json();
 

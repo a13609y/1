@@ -224,12 +224,19 @@ export default async function (ctx) {
   try{urlPool=JSON.parse(ctx.storage.get(urlPoolKey)||'[]');}catch(_){}
   let index=parseInt(ctx.storage.get(indexKey)||'0');
 
+  // 冷却：距离上次请求API是否超过COOLDOWN分钟
   const lastRequest  = parseInt(ctx.storage.get(cooldownKey)||'0');
   const expired      = (Date.now()-lastRequest)>=cooldown;
   const configSig    = `${batch}|${r18}|${keyword}|${imageSize}|${aspectRatio}`;
   const configChanged= configSig!==(ctx.storage.get(configKey)||'');
 
-  if(expired||configChanged){
+  // 满足以下任一条件就重新请求API：
+  // 1. 冷却时间到了
+  // 2. 配置参数变了
+  // 3. 图片池已经全部看完（index 超出池子）
+  const poolExhausted = urlPool.length===0 || index>=urlPool.length;
+
+  if(expired||configChanged||poolExhausted){
     for(let i=0;i<urlPool.length;i++) ctx.storage.delete(`setu_img_${family}_${i}`);
     try{
       const body={r18:parseInt(r18),num:batch,size:[imageSize],aspectRatio:[aspectRatio]};
@@ -247,6 +254,7 @@ export default async function (ctx) {
         urlPool=newUrls; index=0;
         ctx.storage.set(urlPoolKey,JSON.stringify(urlPool));
         ctx.storage.set(indexKey,'0');
+        // 只有真正调用了API才更新冷却时间戳
         ctx.storage.set(cooldownKey,String(Date.now()));
         ctx.storage.set(configKey,configSig);
       }
@@ -257,14 +265,14 @@ export default async function (ctx) {
 
   if(urlPool.length===0) return buildFallbackWidget(visible,columns,maxRows,sorted);
 
-  if(index>=urlPool.length){
-    index=0;
-    ctx.storage.set(cooldownKey,String(Date.now()));
-  }
+  // 确保 index 在范围内（容错）
+  if(index>=urlPool.length) index=0;
 
   const picUrl    = urlPool[index];
   const nextIndex = (index+1)%urlPool.length;
   const nextUrl   = urlPool[nextIndex];
+  // 每次打开都推进 index，实现每次都换图
+  // 当 index 超出池子时，下次打开会触发重新请求API（poolExhausted）
   ctx.storage.set(indexKey,String(index+1));
 
   const imgCacheKey=`setu_img_${family}_${index}`;

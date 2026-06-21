@@ -159,18 +159,14 @@ export default async function (ctx) {
     .filter(item => { if (seen.has(item.name)) return false; seen.add(item.name); return true; });
 
   // ─── 按 widgetFamily 精确控制布局 ─────────────────────────────────────────
-  // 根据文档：systemSmall / systemMedium / systemLarge / systemExtraLarge
   const family = ctx.widgetFamily || "systemLarge";
 
-  // 每种尺寸精确配置：
-  // small  (~155×155pt): 2列×3行，字号11，padding极小
-  // medium (~329×155pt): 4列×3行，字号11，padding极小
-  // large  (~329×345pt): 5列×6行，字号12，padding小
+  // nameSize: 节假日名称字号；daysSize: 距离天数字号（比名称小）
   const cfg = {
-    systemSmall:      { cols: 2, rows: 3, size: 11, pad: [3, 5], gap: 4, wpad: [8, 6]  },
-    systemMedium:     { cols: 4, rows: 3, size: 11, pad: [3, 5], gap: 4, wpad: [8, 6]  },
-    systemLarge:      { cols: 5, rows: 6, size: 12, pad: [4, 6], gap: 5, wpad: [10, 8] },
-    systemExtraLarge: { cols: 5, rows: 8, size: 13, pad: [5, 8], gap: 6, wpad: [12,10] },
+    systemSmall:      { cols: 2, rows: 3, nameSize: 11, daysSize: 9,  pad: [4, 6], gap: 3, wpad: [8, 6],   innerGap: 2 },
+    systemMedium:     { cols: 4, rows: 3, nameSize: 11, daysSize: 9,  pad: [4, 6], gap: 3, wpad: [8, 6],   innerGap: 2 },
+    systemLarge:      { cols: 5, rows: 6, nameSize: 12, daysSize: 10, pad: [5, 6], gap: 4, wpad: [10, 8],  innerGap: 2 },
+    systemExtraLarge: { cols: 5, rows: 8, nameSize: 13, daysSize: 11, pad: [5, 8], gap: 5, wpad: [12, 10], innerGap: 3 },
   };
   const c = cfg[family] || cfg.systemLarge;
 
@@ -179,6 +175,7 @@ export default async function (ctx) {
   // ─── 渲染 ─────────────────────────────────────────────────────────────────
   const urgentBg   = "#FFDEDE", urgentText = "#E53935";
   const normalBg   = "#E0F7EA", normalText = "#2E7D32";
+  const urgentSub  = "#EF9A9A", normalSub  = "#66BB6A";
 
   const rowDefs = [];
   for (let i = 0; i < visible.length; i += c.cols) rowDefs.push(visible.slice(i, i + c.cols));
@@ -186,33 +183,53 @@ export default async function (ctx) {
   const rowChildren = rowDefs.map(row => {
     const cells = row.map(item => {
       const isUrgent = sorted.indexOf(item) < 2;
-      const label = item.days === 0 ? `${item.name} 今天` : `${item.name} ${item.days}天`;
+      const daysLabel = item.days === 0 ? "今天" : `还有${item.days}天`;
+
       return {
         type: "stack",
-        direction: "row",
+        // 每个格子：column 方向，名称在上，距离天数在下
+        direction: "column",
         alignItems: "center",
         backgroundColor: isUrgent ? urgentBg : normalBg,
         borderRadius: 20,
         padding: c.pad,
+        gap: c.innerGap,
         flex: 1,
-        children: [{
-          type: "text",
-          text: label,
-          font: { size: c.size, weight: "medium" },
-          textColor: isUrgent ? urgentText : normalText,
-          maxLines: 1,
-          minScale: 1.0,   // 不允许缩放，字号已经精确控制好了
-          textAlign: "center",
-          flex: 1,
-        }],
+        children: [
+          {
+            // 节假日名称：较大字号
+            type: "text",
+            text: item.name,
+            font: { size: c.nameSize, weight: "medium" },
+            textColor: isUrgent ? urgentText : normalText,
+            maxLines: 1,
+            minScale: 0.8,
+            textAlign: "center",
+          },
+          {
+            // 距离天数：较小字号，颜色稍浅
+            type: "text",
+            text: daysLabel,
+            font: { size: c.daysSize, weight: "regular" },
+            textColor: isUrgent ? urgentSub : normalSub,
+            maxLines: 1,
+            minScale: 0.8,
+            textAlign: "center",
+          },
+        ],
       };
     });
+
     // 补空列
     while (cells.length < c.cols) cells.push({
-      type: "stack", flex: 1,
+      type: "stack",
+      flex: 1,
       backgroundColor: "rgba(0,0,0,0)",
-      padding: c.pad, borderRadius: 20, children: [],
+      padding: c.pad,
+      borderRadius: 20,
+      children: [],
     });
+
     return {
       type: "stack",
       direction: "row",

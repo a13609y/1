@@ -1,38 +1,12 @@
-// ==UserScript==
-// @Name         节假日倒计时 × 每日美图
-// @Platform     Egern
-// @Type         generic
-// @Author       merged
-// ==/UserScript==
-
-// ============================================================
-// 环境变量说明（在 Egern 脚本 → Env 中填写）
-// ============================================================
-// ── 图片相关 ──
-// API_KEY    可选  lolicon API Key
-// R18        可选  0=非R18 / 1=R18 / 2=混合  默认：2
-// KEYWORDS   可选  Pixiv 日文标签，多个用 | 分隔，随机取一个
-//            示例：初音ミク|エミリア|雷電将軍
-// BATCH      可选  每次请求图片数  默认：20（1~20）
-// COOLDOWN   可选  API 请求冷却分钟  默认：5
-// ============================================================
-
 export default async function (ctx) {
-  const now   = new Date();
+  const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const family = ctx.widgetFamily || 'systemLarge';
 
-  // ── 锁屏小组件提前返回 ──────────────────────────────────────────────────
-  if (family === 'accessoryRectangular' || family === 'accessoryCircular') {
-    return { type: 'widget', children: [{ type: 'image', src: 'sf-symbol:calendar', width: 28, height: 28 }] };
-  }
-  if (family === 'accessoryInline') {
-    return { type: 'widget', children: [{ type: 'text', text: '节日倒计时', maxLines: 1 }] };
-  }
+  // ─── 环境变量 ────────────────────────────────────────────────────────────
+  // BG_IMAGE_URL: 背景图片网址（.jpg/.png 等），留空则不使用背景图
+  const bgImageUrl = ctx.env.BG_IMAGE_URL || "";
 
-  // ════════════════════════════════════════════════════════════
-  // 1. 农历换算（寿星万年历，1900-2100）
-  // ════════════════════════════════════════════════════════════
+  // ─── 农历换算（寿星万年历 1900-2100） ────────────────────────────────────
   const springFestival = [
     [1900,1,31],[1901,2,19],[1902,2,8],[1903,1,29],[1904,2,16],[1905,2,4],[1906,1,25],[1907,2,13],[1908,2,2],[1909,1,22],
     [1910,2,10],[1911,1,30],[1912,2,18],[1913,2,6],[1914,1,26],[1915,2,14],[1916,2,3],[1917,1,23],[1918,2,11],[1919,2,1],
@@ -96,9 +70,7 @@ export default async function (ctx) {
     return result;
   }
 
-  // ════════════════════════════════════════════════════════════
-  // 2. 节气算法（VSOP87 简化，精确到分钟级）
-  // ════════════════════════════════════════════════════════════
+  // ─── 节气算法 ─────────────────────────────────────────────────────────────
   const solarTermNames = [
     "小寒","大寒","立春","雨水","惊蛰","春分","清明","谷雨",
     "立夏","小满","芒种","夏至","小暑","大暑","立秋","处暑",
@@ -116,279 +88,201 @@ export default async function (ctx) {
     const C  = (1.914602 - 0.004817*T - 0.000014*T*T)*Math.sin(Mr)
              + (0.019993 - 0.000101*T)*Math.sin(2*Mr)
              + 0.000289*Math.sin(3*Mr);
-    const omega = 125.04 - 1934.136*T;
-    const app = (L0+C) - 0.00569 - 0.00478*Math.sin(omega*Math.PI/180);
+    const app = L0 + C - 0.00569 - 0.00478*Math.sin((125.04-1934.136*T)*Math.PI/180);
     return ((app % 360) + 360) % 360;
   }
 
   function JDToDate(JD) {
-    const z=Math.floor(JD+0.5), f=JD+0.5-z;
-    let A=z;
-    if (z>=2299161){const a=Math.floor((z-1867216.25)/36524.25);A=z+1+a-Math.floor(a/4);}
-    const B=A+1524,C=Math.floor((B-122.1)/365.25),D=Math.floor(365.25*C),E=Math.floor((B-D)/30.6001);
-    const day=B-D-Math.floor(30.6001*E)+f;
+    const z = Math.floor(JD+0.5), f = JD+0.5-z;
+    let A = z;
+    if (z >= 2299161) { const a=Math.floor((z-1867216.25)/36524.25); A=z+1+a-Math.floor(a/4); }
+    const B=A+1524, C=Math.floor((B-122.1)/365.25);
+    const D=Math.floor(365.25*C), E=Math.floor((B-D)/30.6001);
     const month=E<14?E-1:E-13;
-    return new Date(month>2?C-4716:C-4715, month-1, Math.floor(day));
+    return new Date(month>2?C-4716:C-4715, month-1, Math.floor(B-D-Math.floor(30.6001*E)+f));
   }
 
   function getSolarTermDate(year, termName) {
-    const idx=solarTermNames.indexOf(termName); if(idx<0)return null;
-    const degree=solarTermDegrees[idx];
-    let JD=2451545.0+365.2422*(year-2000)+(degree/360)*365.2422;
-    for(let i=0;i<50;i++){
-      const T=(JD-2451545.0)/36525.0;
-      let diff=degree-getSunLongitude(T);
-      if(diff>180)diff-=360;if(diff<-180)diff+=360;
-      if(Math.abs(diff)<0.0001)break;
-      JD+=diff/360*365.2422;
+    const idx = solarTermNames.indexOf(termName);
+    if (idx < 0) return null;
+    const degree = solarTermDegrees[idx];
+    let JD = 2451545.0 + 365.2422*(year-2000) + (degree/360)*365.2422;
+    for (let i = 0; i < 50; i++) {
+      const T = (JD-2451545.0)/36525.0;
+      let diff = degree - getSunLongitude(T);
+      if (diff > 180) diff -= 360;
+      if (diff < -180) diff += 360;
+      if (Math.abs(diff) < 0.0001) break;
+      JD += diff/360*365.2422;
     }
-    return JDToDate(JD+8/24);
+    return JDToDate(JD + 8/24);
   }
 
   function getFathersDay(year) {
-    const d=new Date(year,5,1); const dow=d.getDay();
-    return new Date(year,5,(dow===0?1:8-dow)+14);
+    const d = new Date(year, 5, 1);
+    const dow = d.getDay();
+    return new Date(year, 5, (dow===0?1:8-dow)+14);
   }
 
-  // ════════════════════════════════════════════════════════════
-  // 3. 构建节日列表
-  // ════════════════════════════════════════════════════════════
+  // ─── 构建节日列表 ─────────────────────────────────────────────────────────
+  // 用整数天数，避免浮点误差
   function daysUntil(date) {
-    if(!date)return -1;
-    return Math.ceil((new Date(date.getFullYear(),date.getMonth(),date.getDate())-today)/86400000);
+    if (!date) return -1;
+    const target = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const diff = target.getTime() - today.getTime();
+    return Math.round(diff / 86400000); // round 而非 ceil，消除夏令时误差
   }
 
-  const items=[];
-  function add(name,date){const d=daysUntil(date);if(d>=0)items.push({name,days:d});}
+  const items = [];
+  function add(name, date) {
+    const days = daysUntil(date);
+    if (days >= 0) items.push({ name, days });
+  }
 
-  for(const y of [now.getFullYear(), now.getFullYear()+1]){
+  for (const y of [now.getFullYear(), now.getFullYear()+1]) {
     add("父亲节",  getFathersDay(y));
-    add("建党节",  new Date(y,6,1));
-    add("建军节",  new Date(y,7,1));
-    add("教师节",  new Date(y,8,10));
-    add("国庆节",  new Date(y,9,1));
-    add("光棍节",  new Date(y,10,11));
-    add("圣诞节",  new Date(y,11,25));
-    add("跨年夜",  new Date(y,11,31));
-    add("元旦",    new Date(y,0,1));
-    add("情人节",  new Date(y,1,14));
-    for(const t of ["夏至","小暑","大暑","立秋","处暑","白露","秋分",
-                     "寒露","霜降","立冬","小雪","大雪","冬至","小寒","大寒","立春"])
-      add(t, getSolarTermDate(y,t));
-    add("七夕节",  lunarToSolar(y,7,7));
-    add("中元节",  lunarToSolar(y,7,15));
-    add("中秋节",  lunarToSolar(y,8,15));
-    add("重阳节",  lunarToSolar(y,9,9));
+    add("建党节",  new Date(y, 6, 1));
+    add("建军节",  new Date(y, 7, 1));
+    add("教师节",  new Date(y, 8, 10));
+    add("国庆节",  new Date(y, 9, 1));
+    add("光棍节",  new Date(y, 10, 11));
+    add("圣诞节",  new Date(y, 11, 25));
+    add("跨年夜",  new Date(y, 11, 31));
+    add("元旦",    new Date(y, 0, 1));
+    add("情人节",  new Date(y, 1, 14));
+    for (const t of ["夏至","小暑","大暑","立秋","处暑","白露","秋分",
+                      "寒露","霜降","立冬","小雪","大雪","冬至","小寒","大寒","立春"]) {
+      add(t, getSolarTermDate(y, t));
+    }
+    add("七夕节",  lunarToSolar(y, 7, 7));
+    add("中元节",  lunarToSolar(y, 7, 15));
+    add("中秋节",  lunarToSolar(y, 8, 15));
+    add("重阳节",  lunarToSolar(y, 9, 9));
   }
 
-  const seen=new Set();
-  const sorted=items
-    .sort((a,b)=>a.days-b.days)
-    .filter(item=>{if(seen.has(item.name))return false;seen.add(item.name);return true;});
+  const seen = new Set();
+  const sorted = items
+    .sort((a, b) => a.days - b.days)
+    .filter(item => { if (seen.has(item.name)) return false; seen.add(item.name); return true; });
 
-  // ════════════════════════════════════════════════════════════
-  // 4. 按组件尺寸决定布局
-  // ════════════════════════════════════════════════════════════
-  let columns, maxRows;
-  if      (family==='systemSmall')      { columns=2; maxRows=3; }
-  else if (family==='systemMedium')     { columns=3; maxRows=3; }
-  else if (family==='systemExtraLarge') { columns=5; maxRows=8; }
-  else                                   { columns=5; maxRows=6; }
-
-  const visible = sorted.slice(0, columns * maxRows);
-
-  // ════════════════════════════════════════════════════════════
-  // 5. 获取背景图片（色图逻辑，完整保留）
-  // ════════════════════════════════════════════════════════════
-  const apiKey   = ctx.env.API_KEY  || '';
-  const r18      = ctx.env.R18      || '2';
-  const keywords = ctx.env.KEYWORDS || '';
-  const batch    = Math.min(20, Math.max(1, parseInt(ctx.env.BATCH    || '20')));
-  const cooldown = Math.max(1,            parseInt(ctx.env.COOLDOWN   || '5')) * 60 * 1000;
-
-  const tagList  = keywords.split('|').map(t=>t.trim()).filter(Boolean);
-  const keyword  = tagList.length>0 ? tagList[Math.floor(Math.random()*tagList.length)] : '';
-
-  let aspectRatio;
-  if      (family==='systemMedium')                             aspectRatio='gt1.6lt2.4';
-  else if (family==='systemLarge'||family==='systemExtraLarge') aspectRatio='gt0.4lt0.65';
-  else                                                          aspectRatio='gt0.8lt1.3';
-
-  const imageSize   = (family==='systemSmall') ? 'small' : 'regular';
-  const urlPoolKey  = `setu_urls_${family}`;
-  const indexKey    = `setu_index_${family}`;
-  const cooldownKey = `setu_cooldown_${family}`;
-  const configKey   = `setu_config_${family}`;
-
-  let urlPool=[];
-  try{urlPool=JSON.parse(ctx.storage.get(urlPoolKey)||'[]');}catch(_){}
-  let index=parseInt(ctx.storage.get(indexKey)||'0');
-
-  // 冷却：距离上次请求API是否超过COOLDOWN分钟
-  const lastRequest  = parseInt(ctx.storage.get(cooldownKey)||'0');
-  const expired      = (Date.now()-lastRequest)>=cooldown;
-  const configSig    = `${batch}|${r18}|${keyword}|${imageSize}|${aspectRatio}`;
-  const configChanged= configSig!==(ctx.storage.get(configKey)||'');
-
-  // 满足以下任一条件就重新请求API：
-  // 1. 冷却时间到了
-  // 2. 配置参数变了
-  // 3. 图片池已经全部看完（index 超出池子）
-  const poolExhausted = urlPool.length===0 || index>=urlPool.length;
-
-  if(expired||configChanged||poolExhausted){
-    for(let i=0;i<urlPool.length;i++) ctx.storage.delete(`setu_img_${family}_${i}`);
-    try{
-      const body={r18:parseInt(r18),num:batch,size:[imageSize],aspectRatio:[aspectRatio]};
-      if(apiKey)  body.apikey=apiKey;
-      if(keyword) body.tag=[[keyword]];
-      const resp=await ctx.http.post('https://api.lolicon.app/setu/v2',{
-        headers:{'Content-Type':'application/json','User-Agent':'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15'},
-        body:JSON.stringify(body)
-      });
-      const obj=await resp.json();
-      if(obj.error)throw new Error(obj.error);
-      if(!obj.data||obj.data.length===0)throw new Error('No data');
-      const newUrls=obj.data.map(pic=>pic.urls?.[imageSize]||pic.urls?.original||'').filter(Boolean);
-      if(newUrls.length>0){
-        urlPool=newUrls; index=0;
-        ctx.storage.set(urlPoolKey,JSON.stringify(urlPool));
-        ctx.storage.set(indexKey,'0');
-        // 只有真正调用了API才更新冷却时间戳
-        ctx.storage.set(cooldownKey,String(Date.now()));
-        ctx.storage.set(configKey,configSig);
-      }
-    }catch(e){
-      if(urlPool.length===0) return buildFallbackWidget(visible,columns,maxRows,sorted);
+  // ─── 背景图片：通过 ctx.http 下载后转 base64 data URI ────────────────────
+  let bgDataUri = null;
+  if (bgImageUrl) {
+    try {
+      const resp = await ctx.http.get(bgImageUrl);
+      const blob = await resp.blob();
+      const ab = await blob.arrayBuffer();
+      const bytes = new Uint8Array(ab);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      const b64 = btoa(binary);
+      const lower = bgImageUrl.toLowerCase();
+      let mime = "image/jpeg";
+      if (lower.endsWith(".png"))       mime = "image/png";
+      else if (lower.endsWith(".webp")) mime = "image/webp";
+      else if (lower.endsWith(".gif"))  mime = "image/gif";
+      bgDataUri = "data:" + mime + ";base64," + b64;
+    } catch (_) {
+      // 下载失败退回纯色背景
     }
   }
 
-  if(urlPool.length===0) return buildFallbackWidget(visible,columns,maxRows,sorted);
+  // ─── 按 widgetFamily 精确控制布局 ─────────────────────────────────────────
+  const family = ctx.widgetFamily || "systemLarge";
 
-  // 确保 index 在范围内（容错）
-  if(index>=urlPool.length) index=0;
-
-  const picUrl    = urlPool[index];
-  const nextIndex = (index+1)%urlPool.length;
-  const nextUrl   = urlPool[nextIndex];
-  // 每次打开都推进 index，实现每次都换图
-  // 当 index 超出池子时，下次打开会触发重新请求API（poolExhausted）
-  ctx.storage.set(indexKey,String(index+1));
-
-  const imgCacheKey=`setu_img_${family}_${index}`;
-  const imgCache=ctx.storage.getJSON(imgCacheKey);
-  let base64;
-
-  if(imgCache?.url===picUrl&&imgCache?.base64){
-    base64=imgCache.base64;
-  }else{
-    try{
-      base64=await downloadBase64(ctx,picUrl);
-      ctx.storage.setJSON(imgCacheKey,{url:picUrl,base64});
-    }catch(e){
-      return buildFallbackWidget(visible,columns,maxRows,sorted);
-    }
-  }
-
-  // 预下载下一张
-  const nextCacheKey=`setu_img_${family}_${nextIndex}`;
-  const nextCache=ctx.storage.getJSON(nextCacheKey);
-  if(!nextCache||nextCache.url!==nextUrl){
-    downloadBase64(ctx,nextUrl)
-      .then(b64=>ctx.storage.setJSON(nextCacheKey,{url:nextUrl,base64:b64}))
-      .catch(()=>{});
-  }
-
-  // ════════════════════════════════════════════════════════════
-  // 6. 渲染：图片做背景，节日标签叠在上面
-  // ════════════════════════════════════════════════════════════
-  return {
-    type: 'widget',
-    backgroundImage: `data:image/jpeg;base64,${base64}`,
-    padding: [10, 8],
-    gap: 6,
-    url: picUrl,
-    children: [buildGrid(visible, columns, sorted)],
+  const cfg = {
+    systemSmall:      { cols: 2, rows: 3, nameSize: 11, daysSize: 9,  pad: [4, 6],  gap: 2, rowGap: 4, colGap: 4, wpad: [6, 5]  },
+    systemMedium:     { cols: 4, rows: 3, nameSize: 11, daysSize: 9,  pad: [4, 6],  gap: 2, rowGap: 4, colGap: 4, wpad: [6, 5]  },
+    systemLarge:      { cols: 4, rows: 6, nameSize: 12, daysSize: 10, pad: [5, 8],  gap: 2, rowGap: 5, colGap: 5, wpad: [8, 7]  },
+    systemExtraLarge: { cols: 5, rows: 8, nameSize: 13, daysSize: 11, pad: [6, 10], gap: 3, rowGap: 6, colGap: 6, wpad: [10, 9] },
   };
-}
+  const c = cfg[family] || cfg.systemLarge;
 
-// ── 构建标签网格 ─────────────────────────────────────────────────────────────
-function buildGrid(visible, columns, sorted) {
-  // 有图片背景时：标签用半透明白色背景+深色文字，紧急用半透明红色
-  const urgentBg   = 'rgba(255,80,80,0.55)';
-  const urgentText = '#FFFFFF';
-  const normalBg   = 'rgba(255,255,255,0.45)';
-  const normalText = '#1A1A1A';
+  const visible = sorted.slice(0, c.cols * c.rows);
 
-  const rows = [];
-  for(let i=0;i<visible.length;i+=columns) rows.push(visible.slice(i,i+columns));
+  // ─── 按天数区间返回格子背景色 ──────────────────────────────────────────────
+  // days 已是整数（Math.round）
+  // 0 天（今天）  → 橙  rgba(255,149,0,0.70)
+  // 1 ~ 7 天     → 绿  rgba(52,199,89,0.60)
+  // 8 ~ 30 天    → 蓝  rgba(0,122,255,0.45)
+  // > 30 天      → 灰  rgba(120,120,120,0.35)
+  function cellBg(d) {
+    if (d === 0)  return "#FF9500B3";
+    if (d <= 7)   return "#34C75999";
+    if (d <= 30)  return "#007AFF73";
+    return               "#78787859";
+  }
 
-  const rowChildren = rows.map(row => {
+  // ─── 渲染 ─────────────────────────────────────────────────────────────────
+  const rowDefs = [];
+  for (let i = 0; i < visible.length; i += c.cols) rowDefs.push(visible.slice(i, i + c.cols));
+
+  const rowChildren = rowDefs.map(row => {
     const cells = row.map(item => {
-      const isUrgent = sorted.indexOf(item) < 2;
-      const label = item.days===0 ? `${item.name} 今天` : `${item.name} ${item.days}天`;
+      const d = item.days;
+      const daysLabel = d === 0 ? "今天" : (d + "天后");
       return {
-        type:'stack', direction:'row', alignItems:'center',
-        backgroundColor: isUrgent ? urgentBg : normalBg,
-        borderRadius:20, padding:[5,8], flex:1,
-        children:[{
-          type:'text', text:label,
-          font:{size:'subheadline',weight:'medium'},
-          textColor: isUrgent ? urgentText : normalText,
-          maxLines:1, minScale:0.8, textAlign:'center', flex:1,
-        }],
+        type: "stack",
+        direction: "column",
+        alignItems: "center",
+        backgroundColor: cellBg(d),
+        borderRadius: 12,
+        padding: c.pad,
+        gap: c.gap,
+        flex: 1,
+        children: [
+          {
+            type: "text",
+            text: item.name,
+            font: { size: c.nameSize, weight: "semibold" },
+            textColor: "#FFFFFF",
+            maxLines: 1,
+            minScale: 0.8,
+            textAlign: "center",
+          },
+          {
+            type: "text",
+            text: daysLabel,
+            font: { size: c.daysSize, weight: "regular" },
+            textColor: "#FFFFFFD9",
+            maxLines: 1,
+            minScale: 0.8,
+            textAlign: "center",
+          },
+        ],
       };
     });
-    while(cells.length<columns) cells.push({
-      type:'stack',flex:1,backgroundColor:'rgba(0,0,0,0)',
-      padding:[5,8],borderRadius:20,children:[],
+    // 补空列
+    while (cells.length < c.cols) cells.push({
+      type: "stack",
+      flex: 1,
+      backgroundColor: "#00000000",
+      padding: c.pad,
+      borderRadius: 12,
+      children: [],
     });
-    return {type:'stack',direction:'row',alignItems:'center',gap:6,children:cells};
+    return {
+      type: "stack",
+      direction: "row",
+      alignItems: "center",
+      gap: c.colGap,
+      children: cells,
+    };
   });
 
-  return {type:'stack',direction:'column',gap:6,children:rowChildren};
-}
-
-// ── 图片加载失败时的纯色降级（保留原有绿色风格） ────────────────────────────
-function buildFallbackWidget(visible, columns, maxRows, sorted) {
-  const urgentBg='#FFDEDE', urgentText='#E53935';
-  const normalBg='#E0F7EA', normalText='#2E7D32';
-
-  const rows=[];
-  for(let i=0;i<visible.length;i+=columns) rows.push(visible.slice(i,i+columns));
-
-  const rowChildren=rows.map(row=>{
-    const cells=row.map(item=>{
-      const isUrgent=sorted.indexOf(item)<2;
-      const label=item.days===0?`${item.name} 今天`:`${item.name} ${item.days}天`;
-      return{
-        type:'stack',direction:'row',alignItems:'center',
-        backgroundColor:isUrgent?urgentBg:normalBg,
-        borderRadius:20,padding:[5,8],flex:1,
-        children:[{type:'text',text:label,font:{size:'subheadline',weight:'medium'},
-          textColor:isUrgent?urgentText:normalText,maxLines:1,minScale:0.8,textAlign:'center',flex:1}],
-      };
-    });
-    while(cells.length<columns)cells.push({
-      type:'stack',flex:1,backgroundColor:'rgba(0,0,0,0)',padding:[5,8],borderRadius:20,children:[],
-    });
-    return{type:'stack',direction:'row',alignItems:'center',gap:6,children:cells};
-  });
-
-  return{
-    type:'widget',
-    backgroundColor:{light:'#FFFFFF',dark:'#1C1C1E'},
-    padding:[12,10],gap:6,
-    children:rowChildren,
+  // ─── 组装根 widget ────────────────────────────────────────────────────────
+  const widget = {
+    type: "widget",
+    padding: c.wpad,
+    gap: c.rowGap,
+    children: rowChildren,
   };
-}
 
-// ── 下载图片转 base64 ────────────────────────────────────────────────────────
-async function downloadBase64(ctx, url) {
-  const imgResp=await ctx.http.get(url,{headers:{'Referer':'https://www.pixiv.net/'}});
-  const buffer=await imgResp.arrayBuffer();
-  const bytes=new Uint8Array(buffer);
-  let binary='';
-  for(let i=0;i<bytes.byteLength;i++) binary+=String.fromCharCode(bytes[i]);
-  return btoa(binary);
+  if (bgDataUri) {
+    widget.backgroundImage = bgDataUri;
+  } else {
+    widget.backgroundColor = { light: "#FFFFFF", dark: "#1C1C1E" };
+  }
+
+  return widget;
 }

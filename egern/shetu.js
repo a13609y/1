@@ -1,5 +1,5 @@
 // ==UserScript==
-// @Name         每日色图小组件（由圈x 每日色图脚本更改）
+// @Name         每日色图小组件（由 quantumult x 每日色图脚本 Ai 更改）
 // @Platform     Egern
 // @Type         generic
 // @Author       Cuttlefish (改编为 Egern 版本)
@@ -36,7 +36,7 @@ export default async function(ctx) {
   const r18      = ctx.env.R18      || '2';
   const keywords = ctx.env.KEYWORDS || '';
   const batch    = Math.min(20, Math.max(1, parseInt(ctx.env.BATCH    || '20')));
-  const cooldown = Math.max(1,            parseInt(ctx.env.COOLDOWN   || '5')) * 60 * 1000;
+  const cooldown = Math.max(0,            parseInt(ctx.env.COOLDOWN   || '5')) * 60 * 1000;
 
   const tagList = keywords.split('|').map(t => t.trim()).filter(Boolean);
   const keyword = tagList.length > 0

@@ -38,7 +38,6 @@ export default async function(ctx) {
   const batch    = Math.min(20, Math.max(1, parseInt(ctx.env.BATCH    || '20')));
   const cooldown = Math.max(1,            parseInt(ctx.env.COOLDOWN   || '5')) * 60 * 1000;
 
-  // 多标签随机选一个
   const tagList = keywords.split('|').map(t => t.trim()).filter(Boolean);
   const keyword = tagList.length > 0
     ? tagList[Math.floor(Math.random() * tagList.length)]
@@ -46,7 +45,6 @@ export default async function(ctx) {
 
   const family = ctx.widgetFamily;
 
-  // 锁屏小组件提前返回，不需要走图片逻辑
   if (family === 'accessoryRectangular' || family === 'accessoryCircular') {
     return { type: 'widget', children: [{ type: 'image', src: 'sf-symbol:photo.artframe', width: 28, height: 28 }] };
   }
@@ -54,37 +52,46 @@ export default async function(ctx) {
     return { type: 'widget', children: [{ type: 'text', text: '每日色图', maxLines: 1 }] };
   }
 
-  // 按小组件宽高比筛选图片方向
+  // ----------------------------------------------------------------
+  // 按各组件实测宽高比精确筛选图片（允许 ±15% 误差）
+  //
+  // small      ≈ 1:1 正方形              → gt0.85lt1.15
+  // medium     ≈ 2.15:1 横图             → gt1.83lt2.47
+  // large      ≈ 1:1 近正方（iPad=1:1） → gt0.85lt1.15
+  // extraLarge ≈ 2.1:1 横图（iPad）     → gt1.79lt2.42
+  // ----------------------------------------------------------------
   let aspectRatio;
-  if (family === 'systemMedium') {
-    aspectRatio = 'gt1.6lt2.4';
-  } else if (family === 'systemLarge' || family === 'systemExtraLarge') {
-    aspectRatio = 'gt0.4lt0.65';
-  } else {
-    aspectRatio = 'gt0.8lt1.3';
+  switch (family) {
+    case 'systemMedium':
+      aspectRatio = 'gt1.83lt2.47';
+      break;
+    case 'systemExtraLarge':
+      aspectRatio = 'gt1.79lt2.42';
+      break;
+    case 'systemSmall':
+    case 'systemLarge':
+    default:
+      aspectRatio = 'gt0.85lt1.15';
+      break;
   }
 
-  // 按小组件尺寸选图片规格
   const imageSize = (family === 'systemSmall') ? 'small' : 'regular';
 
-  // 各尺寸独立的存储 key
   const urlPoolKey  = `setu_urls_${family}`;
   const indexKey    = `setu_index_${family}`;
   const cooldownKey = `setu_cooldown_${family}`;
   const configKey   = `setu_config_${family}`;
 
-  // 读取本地 URL 列表和指针
   let urlPool = [];
   try { urlPool = JSON.parse(ctx.storage.get(urlPoolKey) || '[]'); } catch (_) {}
   let index = parseInt(ctx.storage.get(indexKey) || '0');
 
-  const lastRequest  = parseInt(ctx.storage.get(cooldownKey) || '0');
-  const expired      = (Date.now() - lastRequest) >= cooldown;
-  const configSig    = `${batch}|${r18}|${keyword}|${imageSize}|${aspectRatio}`;
+  const lastRequest   = parseInt(ctx.storage.get(cooldownKey) || '0');
+  const expired       = (Date.now() - lastRequest) >= cooldown;
+  const configSig     = `${batch}|${r18}|${keyword}|${imageSize}|${aspectRatio}`;
   const configChanged = configSig !== (ctx.storage.get(configKey) || '');
 
   if (expired || configChanged) {
-    // 配置变了或冷却到期：清理旧图片缓存，请求新一批
     for (let i = 0; i < urlPool.length; i++) {
       ctx.storage.delete(`setu_img_${family}_${i}`);
     }
@@ -94,7 +101,7 @@ export default async function(ctx) {
         r18: parseInt(r18),
         num: batch,
         size: [imageSize],
-        aspectRatio: [aspectRatio]
+        aspectRatio: [aspectRatio],
       };
       if (apiKey)  body.apikey = apiKey;
       if (keyword) body.tag = [[keyword]];
@@ -131,30 +138,24 @@ export default async function(ctx) {
 
   if (urlPool.length === 0) return buildErrorWidget('暂无图片');
 
-  // 指针越界回到开头，同时刷新冷却避免立刻再次请求
+  // 指针越界时只回到开头，不重置冷却时间（重置冷却会导致 COOLDOWN 失效）
   if (index >= urlPool.length) {
     index = 0;
-    ctx.storage.set(cooldownKey, String(Date.now()));
   }
 
-  const picUrl     = urlPool[index];
-  const nextIndex  = (index + 1) % urlPool.length;
-  const nextUrl    = urlPool[nextIndex];
+  const picUrl    = urlPool[index];
+  const nextIndex = (index + 1) % urlPool.length;
+  const nextUrl   = urlPool[nextIndex];
 
-  // 指针前进
   ctx.storage.set(indexKey, String(index + 1));
 
-  // 当前图片缓存检查
   const imgCacheKey = `setu_img_${family}_${index}`;
   const imgCache    = ctx.storage.getJSON(imgCacheKey);
 
   let base64;
-
   if (imgCache?.url === picUrl && imgCache?.base64) {
-    // 缓存命中，直接用
     base64 = imgCache.base64;
   } else {
-    // 缓存未命中，下载当前图片
     try {
       base64 = await downloadBase64(ctx, picUrl);
       ctx.storage.setJSON(imgCacheKey, { url: picUrl, base64 });
@@ -163,7 +164,6 @@ export default async function(ctx) {
     }
   }
 
-  // 渲染当前图片
   const result = {
     type: 'widget',
     backgroundImage: `data:image/jpeg;base64,${base64}`,
@@ -172,11 +172,10 @@ export default async function(ctx) {
     children: []
   };
 
-  // 预下载下一张（异步，不阻塞渲染）
+  // 预下载下一张（异步不阻塞）
   const nextCacheKey = `setu_img_${family}_${nextIndex}`;
   const nextCache    = ctx.storage.getJSON(nextCacheKey);
   if (!nextCache || nextCache.url !== nextUrl) {
-    // 不 await，让它在后台跑，当前帧已经可以返回了
     downloadBase64(ctx, nextUrl)
       .then(b64 => ctx.storage.setJSON(nextCacheKey, { url: nextUrl, base64: b64 }))
       .catch(() => {});
@@ -185,7 +184,6 @@ export default async function(ctx) {
   return result;
 }
 
-// 下载图片并返回 base64 字符串
 async function downloadBase64(ctx, url) {
   const imgResp = await ctx.http.get(url, {
     headers: { 'Referer': 'https://www.pixiv.net/' }

@@ -1,5 +1,5 @@
 // ==UserScript==
-// @Name         每日色图小组件
+// @Name         每日色图小组件（由 quantumult x 每日色图脚本 Ai 更改）
 // @Platform     Egern
 // @Type         generic
 // @Author       Cuttlefish (改编为 Egern 版本)
@@ -164,15 +164,11 @@ export default async function(ctx) {
     }
   }
 
-  // refreshAfter 告诉 iOS 系统下次刷新小组件的时间，不设置则系统自行决定可能几小时都不刷新
-  const refreshAt = new Date(Date.now() + cooldown).toISOString();
-
   const result = {
     type: 'widget',
     backgroundImage: `data:image/jpeg;base64,${base64}`,
     padding: 0,
     url: picUrl,
-    refreshAfter: refreshAt,
     children: []
   };
 

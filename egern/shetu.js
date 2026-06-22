@@ -1,5 +1,5 @@
 // ==UserScript==
-// @Name         每日色图小组件
+// @Name         每日色图小组件（由圈x 每日色图脚本更改）
 // @Platform     Egern
 // @Type         generic
 // @Author       Cuttlefish (改编为 Egern 版本)

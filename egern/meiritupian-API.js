@@ -1,5 +1,5 @@
 // ==UserScript==
-// @Name         每日图片小组件（自定义 API 接口默认真人）
+// @Name         每日图片小组件 Ai 生成（自定义 API 接口默认真人）
 // @Platform     Egern
 // @Type         generic
 // @Author       Cuttlefish (改编为 Egern 版本)

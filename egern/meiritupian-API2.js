@@ -1,5 +1,5 @@
 // ==UserScript==
-// @Name         每日美图小组件（可自定义 API 默认二次元图片）
+// @Name         每日美图小组件 Ai 生成（可自定义 API 默认二次元图片）
 // @Platform     Egern
 // @Type         generic
 // @Author       Cuttlefish (改编为 Egern 版本)

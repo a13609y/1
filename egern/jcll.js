@@ -404,34 +404,54 @@ function formatExpireValue(text) {
   return String(text || '').replace(/^到期\s*/, '');
 }
 
-// remainCount: 未用格子总数；index: 当前未用格子的相对序号（0 = 最靠近已用区域的那格）
-// 按剩余百分比（remainCount/total）选色系：剩余越多越绿，越少越红
-function usageCellColor(remainPercent, C) {
-  if (remainPercent > 80) return { light: '#34C759', dark: '#5FFFB0' };   // 充足 绿
-  if (remainPercent > 60) return { light: '#9BE7B0', dark: '#2ECC71' };   // 较充足 浅绿
-  if (remainPercent > 40) return { light: '#5FD37D', dark: '#7DFFB0' };   // 中等 中绿
-  if (remainPercent > 20) return { light: '#FFB946', dark: '#FFC670' };   // 偏少 橙
-  if (remainPercent > 10) return { light: '#FF8A4C', dark: '#FF9E64' };   // 很少 深橙
-  return { light: '#FF6B6B', dark: '#FF8787' };                           // 告急 红
+// 按格子在未用区域中的相对位置插值颜色，左绿右红，实现逐格渐变
+// cellPos: 0=最左(最充裕) → 1=最右(最接近已用边界)
+function lerpColor(a, b, t) {
+  const h = c => [parseInt(c.slice(1,3),16), parseInt(c.slice(3,5),16), parseInt(c.slice(5,7),16)];
+  const [ar,ag,ab] = h(a), [br,bg,bb] = h(b);
+  const r = Math.round(ar + (br-ar)*t);
+  const g = Math.round(ag + (bg-ag)*t);
+  const bl = Math.round(ab + (bb-ab)*t);
+  return `#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${bl.toString(16).padStart(2,'0')}`;
+}
+
+function cellGradientColor(cellPos, isDark) {
+  // 绿 → 黄绿 → 橙 → 红，按位置插值
+  const stops = isDark
+    ? ['#5FFFB0', '#7DFFB0', '#FFC670', '#FF9E64', '#FF8787']
+    : ['#34C759', '#9BE7B0', '#FFB946', '#FF8A4C', '#FF6B6B'];
+  const t = Math.max(0, Math.min(1, cellPos)) * (stops.length - 1);
+  const i = Math.min(Math.floor(t), stops.length - 2);
+  return lerpColor(stops[i], stops[i+1], t - i);
 }
 
 function buildUsageGrid(C, percent, activeColor, cellSize = 14, cellGap = 5) {
   const total = 35;
   const active = Math.max(0, Math.min(total, Math.round((percent / 100) * total)));
-  const remainPercent = 100 - percent;
-  const remainColor = usageCellColor(remainPercent, C);
+  const remain = total - active; // 未用格子数
   const rows = [];
   for (let row = 0; row < 5; row++) {
     const cells = [];
     for (let col = 0; col < 7; col++) {
       const index = row * 7 + col;
+      const isUsed = index < active;
+      let bgColor;
+      if (isUsed) {
+        bgColor = C.ringBg;
+      } else {
+        // 未用格子：position 0=最左（紧靠已用边界） → 1=最右
+        const remainIndex = index - active;
+        const pos = remain > 1 ? remainIndex / (remain - 1) : 0;
+        const hex = cellGradientColor(pos, false);
+        const hexDark = cellGradientColor(pos, true);
+        bgColor = { light: hex, dark: hexDark };
+      }
       cells.push({
         type: 'stack',
         width: cellSize,
         height: cellSize,
         borderRadius: Math.max(3, Math.round(cellSize / 3)),
-        // 右侧 active 格为已用灰色，左侧为未用彩色
-        backgroundColor: index >= (total - active) ? C.ringBg : remainColor,
+        backgroundColor: bgColor,
         children: []
       });
     }

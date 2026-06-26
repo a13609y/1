@@ -20,8 +20,8 @@ export default async function (ctx) {
   const resetDay = /^\d+$/.test(rawReset) ? Number(rawReset) : null;
 
   const C = {
-    bg: { light: '#F2F2F7', dark: '#000000' },
-    card: { light: '#FFFFFF', dark: '#1C1C1E' },
+    bg: { light: '#FFFFFF', dark: '#000000' },
+    card: { light: '#F2F2F7', dark: '#1C1C1E' },
     text: { light: '#111114', dark: '#F5F5F7' },
     sub: { light: '#8E8E93', dark: '#98989D' },
     weak: { light: '#AEAEB2', dark: '#636366' },

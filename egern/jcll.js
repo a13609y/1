@@ -1,5 +1,5 @@
 /******************************
-脚本名称: SubscriptionCard（Ai 二次更改）
+脚本名称: SubscriptionCard（Ai 二次生成）
 Version : v1.0.0
 更新时间: 2026-06-26
 平台: Egern
@@ -21,7 +21,7 @@ export default async function (ctx) {
 
   const C = {
     bg: { light: '#FFFFFF', dark: '#000000' },
-    card: { light: '#F2F2F7', dark: '#1C1C1E' },
+    card: { light: '#F7F7F9', dark: '#1C1C1E' },
     text: { light: '#111114', dark: '#F5F5F7' },
     sub: { light: '#8E8E93', dark: '#98989D' },
     weak: { light: '#AEAEB2', dark: '#636366' },

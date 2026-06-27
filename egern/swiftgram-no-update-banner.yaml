@@ -1,0 +1,20 @@
+name: "Swiftgram 更新横幅屏蔽"
+description: "屏蔽 Swiftgram 聊天列表顶部的更新提示横幅（「更新 Swiftgram / Apple Watch 应用回来了！」等）。通过 MITM 拦截 api.swiftgram.app/v0/settings 并用 jq 删除响应中的 announcements_data 字段实现。"
+author: "claude"
+icon: "bell.slash.fill"
+
+# MITM：对 api.swiftgram.app 解密 HTTPS 流量
+mitm:
+  hostnames:
+    includes:
+      - "api.swiftgram.app"
+
+# 抓包（可选，调试用，不影响屏蔽效果）
+# http_captures:
+#   - "api.swiftgram.app"
+
+# 响应体重写：删除 global.announcements_data 字段
+body_rewrites:
+  - response_jq:
+      match: "^https://api\\.swiftgram\\.app/v0/settings"
+      filter: 'del(.global.announcements_data)'

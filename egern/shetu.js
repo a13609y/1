@@ -13,7 +13,7 @@
 // R18        可选  0=仅非R18 1=仅R18 2=混合  默认：2
 // KEYWORDS   可选  搜索标签，多个标签用 | 分隔，每次随机选一个
 //            示例：初音ミク|エミリア|雷電将軍
-// BATCH      可选  每次请求图片数量  默认：20  范围：1~20
+// BATCH      可选  每次请求图片数量  默认：1  范围：1~20
 // COOLDOWN   可选  请求最小间隔（分钟）默认：5  设为 0 则每次刷新都请求
 // ============================================================
 
@@ -21,7 +21,7 @@ export default async function(ctx) {
   const apiKey   = ctx.env.API_KEY  || '';
   const r18      = ctx.env.R18      || '2';
   const keywords = ctx.env.KEYWORDS || '';
-  const batch    = Math.min(20, Math.max(1, parseInt(ctx.env.BATCH || '20')));
+  const batch    = Math.min(20, Math.max(1, parseInt(ctx.env.BATCH || '1')));
 
   const rawCooldown = parseInt(ctx.env.COOLDOWN || '5');
   const cooldown    = rawCooldown === 0 ? 0 : Math.max(1, rawCooldown) * 60 * 1000;

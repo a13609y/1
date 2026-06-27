@@ -1,5 +1,5 @@
 name: "Swiftgram 更新横幅屏蔽"
-description: "屏蔽 Swiftgram 聊天列表顶部的更新提示横幅（「更新 Swiftgram / Apple Watch 应用回来了！」等）。通过 MITM 拦截 api.swiftgram.app/v0/settings 并用 jq 删除响应中的 announcements_data 字段实现。"
+description: "屏蔽 Swiftgram 聊天列表顶部的更新提示横幅"
 author: "claude"
 icon: "bell.slash.fill"
 

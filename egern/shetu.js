@@ -1,5 +1,5 @@
 // ==UserScript==
-// @Name         每日色图小组件v2（由 ai 编写适配 iPhone 端）
+// @Name         每日色图小组件 v2（由 ai 编写适配 iPhone 端）
 // @Platform     Egern
 // @Type         generic
 // @Author       Cuttlefish (改编为 Egern 版本)

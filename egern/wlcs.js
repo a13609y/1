@@ -14,6 +14,13 @@ export default async function(ctx) {
   } catch(e) {}
 
   try {
+    // 预热请求：1KB，建立 TCP 连接，让正式测速复用这条连接
+    await ctx.http.get('https://speed.cloudflare.com/__down?bytes=1024', {
+      headers: { 'Cache-Control': 'no-cache' },
+      timeout: 10000
+    });
+
+    // 正式测速：连接已预热，计时更接近纯传输速度
     const startTime = Date.now();
     await ctx.http.get(SPEED_TEST_URL, {
       headers: { 'Cache-Control': 'no-cache' },
@@ -47,34 +54,34 @@ export default async function(ctx) {
   const isSmall  = ctx.widgetFamily === 'systemSmall';
   const isMedium = ctx.widgetFamily === 'systemMedium';
 
-  // 进度条 flex 比例，参考 100 Mbps 为满格
-  const progressFlex = Math.min(Math.max(speedData.mbps / 100, 0.05), 1);
-  const remainFlex   = 1 - progressFlex;
-
-  // 当前时间 ISO，供 date 元素使用
   const nowISO = new Date().toISOString();
 
-  // ── 公共子组件 ──────────────────────────────────────
+  // 通用背景色
+  const bg = { light: '#FFFFFF', dark: '#1C1C1E' };
+  // 次要文字色
+  const subColor = { light: '#8E8E93', dark: '#636366' };
+  // 主文字色
+  const primaryColor = { light: '#1C1C1E', dark: '#F2F2F7' };
 
-  // 顶部标题行
+  // ── 顶部标题行 ──────────────────────────────────────
   const headerRow = {
     type: 'stack',
     direction: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 5,
     children: [
       {
         type: 'image',
         src: `sf-symbol:${icon}`,
-        width: isSmall ? 12 : 14,
-        height: isSmall ? 12 : 14,
+        width: isSmall ? 11 : 13,
+        height: isSmall ? 11 : 13,
         color: color
       },
       {
         type: 'text',
-        text: 'NetSpeed',
-        font: { size: isSmall ? 'caption2' : 'caption1', weight: 'semibold' },
-        textColor: color,
+        text: 'NET SPEED',
+        font: { size: isSmall ? 9 : 10, weight: 'heavy' },
+        textColor: subColor,
         maxLines: 1
       },
       { type: 'spacer' },
@@ -82,63 +89,14 @@ export default async function(ctx) {
         type: 'date',
         date: nowISO,
         format: 'time',
-        font: { size: 'caption2' },
-        textColor: { light: '#8E8E93', dark: '#8E8E93' }
+        font: { size: isSmall ? 9 : 10, weight: 'medium' },
+        textColor: subColor
       }
     ]
   };
 
-  // 进度条
-  const progressBar = {
-    type: 'stack',
-    direction: 'row',
-    height: 4,
-    gap: 0,
-    children: [
-      {
-        type: 'stack',
-        flex: progressFlex,
-        height: 4,
-        backgroundColor: color,
-        borderRadius: 2
-      },
-      ...(remainFlex > 0 ? [{
-        type: 'stack',
-        flex: remainFlex,
-        height: 4,
-        backgroundColor: { light: '#E5E5EA', dark: '#48484A' },
-        borderRadius: 2
-      }] : [])
-    ]
-  };
-
-  // 底部详情行
-  const detailRow = {
-    type: 'stack',
-    direction: 'row',
-    alignItems: 'center',
-    children: [
-      {
-        type: 'text',
-        text: `${speedData.mBs} MB/s`,
-        font: { size: 'caption2' },
-        textColor: { light: '#6B6B6B', dark: '#A1A1A6' },
-        maxLines: 1
-      },
-      { type: 'spacer' },
-      {
-        type: 'text',
-        text: `${speedData.duration}s`,
-        font: { size: 'caption2' },
-        textColor: { light: '#6B6B6B', dark: '#A1A1A6' },
-        maxLines: 1
-      }
-    ]
-  };
-
-  // 速度数字块：左右 spacer 夹住实现真正水平居中
-  // 字号尽量大，minScale 兜底让系统自动缩小到放得下
-  const makeSpeedBlock = (fontSize) => ({
+  // ── 速度数字块：数字极大，Mbps 置于数字正下方 ────────────
+  const makeSpeedBlock = (numSize, unitSize) => ({
     type: 'stack',
     direction: 'row',
     alignItems: 'center',
@@ -153,17 +111,17 @@ export default async function(ctx) {
           {
             type: 'text',
             text: `${speedData.mbps}`,
-            font: { size: fontSize, weight: 'bold' },
+            font: { size: numSize, weight: 'heavy' },
             textColor: color,
             textAlign: 'center',
             maxLines: 1,
-            minScale: 0.5
+            minScale: 0.4
           },
           {
             type: 'text',
             text: 'Mbps',
-            font: { size: isSmall ? 'caption2' : 'footnote', weight: 'medium' },
-            textColor: { light: '#6B6B6B', dark: '#A1A1A6' },
+            font: { size: unitSize, weight: 'semibold' },
+            textColor: subColor,
             textAlign: 'center',
             maxLines: 1
           }
@@ -173,13 +131,52 @@ export default async function(ctx) {
     ]
   });
 
-  // ── 中号：左右分栏布局 ────────────────────────────────
+  // ── 底部详情行 ────────────────────────────────────────
+  const detailRow = {
+    type: 'stack',
+    direction: 'row',
+    alignItems: 'center',
+    gap: 4,
+    children: [
+      {
+        type: 'image',
+        src: 'sf-symbol:speedometer',
+        width: 10,
+        height: 10,
+        color: subColor
+      },
+      {
+        type: 'text',
+        text: `${speedData.mBs} MB/s`,
+        font: { size: isSmall ? 'caption2' : 'footnote', weight: 'medium' },
+        textColor: subColor,
+        maxLines: 1
+      },
+      { type: 'spacer' },
+      {
+        type: 'image',
+        src: 'sf-symbol:clock',
+        width: 10,
+        height: 10,
+        color: subColor
+      },
+      {
+        type: 'text',
+        text: `${speedData.duration}s`,
+        font: { size: isSmall ? 'caption2' : 'footnote', weight: 'medium' },
+        textColor: subColor,
+        maxLines: 1
+      }
+    ]
+  };
+
+  // ── 中号：左右分栏 ────────────────────────────────────
   if (isMedium) {
     return {
       type: 'widget',
       padding: [14, 16, 14, 16],
       gap: 8,
-      backgroundColor: { light: '#FFFFFF', dark: '#2C2C2E' },
+      backgroundColor: bg,
       children: [
         headerRow,
         {
@@ -189,7 +186,7 @@ export default async function(ctx) {
           flex: 1,
           gap: 0,
           children: [
-            // 左：大数字，flex 等分
+            // 左：超大速度数字
             {
               type: 'stack',
               direction: 'column',
@@ -212,17 +209,17 @@ export default async function(ctx) {
                         {
                           type: 'text',
                           text: `${speedData.mbps}`,
-                          font: { size: 60, weight: 'bold' },
+                          font: { size: 80, weight: 'heavy' },
                           textColor: color,
                           textAlign: 'center',
                           maxLines: 1,
-                          minScale: 0.5
+                          minScale: 0.4
                         },
                         {
                           type: 'text',
                           text: 'Mbps',
-                          font: { size: 'footnote', weight: 'medium' },
-                          textColor: { light: '#6B6B6B', dark: '#A1A1A6' },
+                          font: { size: 14, weight: 'semibold' },
+                          textColor: subColor,
                           textAlign: 'center',
                           maxLines: 1
                         }
@@ -238,63 +235,60 @@ export default async function(ctx) {
             {
               type: 'stack',
               width: 1,
-              backgroundColor: { light: '#E5E5EA', dark: '#48484A' }
+              backgroundColor: { light: '#E5E5EA', dark: '#38383A' }
             },
-            // 右：详情，flex 等分
+            // 右：详情
             {
               type: 'stack',
               direction: 'column',
               flex: 1,
-              gap: 10,
-              padding: [0, 0, 0, 16],
+              gap: 14,
+              padding: [0, 0, 0, 18],
               children: [
                 { type: 'spacer' },
                 {
                   type: 'stack',
-                  direction: 'row',
-                  alignItems: 'center',
-                  gap: 6,
+                  direction: 'column',
+                  gap: 3,
                   children: [
                     {
-                      type: 'image',
-                      src: 'sf-symbol:speedometer',
-                      width: 13,
-                      height: 13,
-                      color: { light: '#6B6B6B', dark: '#A1A1A6' }
+                      type: 'text',
+                      text: 'THROUGHPUT',
+                      font: { size: 9, weight: 'heavy' },
+                      textColor: subColor,
+                      maxLines: 1
                     },
                     {
                       type: 'text',
                       text: `${speedData.mBs} MB/s`,
-                      font: { size: 'subheadline', weight: 'semibold' },
-                      textColor: { light: '#3C3C43', dark: '#EBEBF5' },
+                      font: { size: 'title3', weight: 'bold' },
+                      textColor: primaryColor,
                       maxLines: 1
                     }
                   ]
                 },
                 {
                   type: 'stack',
-                  direction: 'row',
-                  alignItems: 'center',
-                  gap: 6,
+                  direction: 'column',
+                  gap: 3,
                   children: [
                     {
-                      type: 'image',
-                      src: 'sf-symbol:clock',
-                      width: 13,
-                      height: 13,
-                      color: { light: '#6B6B6B', dark: '#A1A1A6' }
+                      type: 'text',
+                      text: 'TEST DURATION',
+                      font: { size: 9, weight: 'heavy' },
+                      textColor: subColor,
+                      maxLines: 1
                     },
                     {
                       type: 'text',
                       text: `${speedData.duration}s`,
-                      font: { size: 'subheadline', weight: 'semibold' },
-                      textColor: { light: '#3C3C43', dark: '#EBEBF5' },
+                      font: { size: 'title3', weight: 'bold' },
+                      textColor: primaryColor,
                       maxLines: 1
                     }
                   ]
                 },
-                { type: 'spacer' },
-                progressBar
+                { type: 'spacer' }
               ]
             }
           ]
@@ -303,20 +297,21 @@ export default async function(ctx) {
     };
   }
 
-  // ── 小号 / 大号：垂直布局 ────────────────────────────
-  const speedFontSize = isSmall ? 40 : 64;
+  // ── 小号 / 大号：垂直布局 ─────────────────────────────
+  // 小号 56，大号 90
+  const numSize  = isSmall ? 56 : 90;
+  const unitSize = isSmall ? 12 : 16;
 
   return {
     type: 'widget',
     padding: isSmall ? [10, 12, 10, 12] : [16, 18, 16, 18],
-    gap: isSmall ? 6 : 10,
-    backgroundColor: { light: '#FFFFFF', dark: '#2C2C2E' },
+    gap: isSmall ? 4 : 8,
+    backgroundColor: bg,
     children: [
       headerRow,
       { type: 'spacer' },
-      makeSpeedBlock(speedFontSize),
+      makeSpeedBlock(numSize, unitSize),
       { type: 'spacer' },
-      progressBar,
       detailRow
     ]
   };

@@ -1,21 +1,10 @@
 // ==UserScript==
-// @Name         每日色图小组件（由 ai 编写适配 iPhone 端）
+// @Name         每日色图小组件v2（由 ai 编写适配 iPhone 端）
 // @Platform     Egern
 // @Type         generic
 // @Author       Cuttlefish (改编为 Egern 版本)
 // @WebURL       https://api.lolicon.app/#/setu
 // ==/UserScript==
-
-// ============================================================
-// 环境变量说明（在 Egern 脚本 → Env 中填写）
-// ============================================================
-// API_KEY    可选  你的 lolicon API Key，不填也可使用但有次数限制
-// R18        可选  0=仅非R18 1=仅R18 2=混合  默认：2
-// KEYWORDS   可选  搜索标签，多个标签用 | 分隔，每次随机选一个
-//            示例：初音ミク|エミリア|雷電将軍
-// BATCH      可选  每次请求图片数量  默认：1  范围：1~20
-// COOLDOWN   可选  请求最小间隔（分钟）默认：5  设为 0 则每次刷新都请求
-// ============================================================
 
 export default async function(ctx) {
   const apiKey   = ctx.env.API_KEY  || '';
@@ -40,8 +29,6 @@ export default async function(ctx) {
     return { type: 'widget', children: [{ type: 'text', text: '每日色图', maxLines: 1 }] };
   }
 
-  // 中号用横图，小号/大号用方形图
-  // 大号原来用竖图(gt0.4lt0.65)，但 Pixiv 竖图少，API 凑不够会补横图导致显示不全，改为方形
   let aspectRatio;
   if (family === 'systemMedium') {
     aspectRatio = 'gt1.6lt2.4';
@@ -60,10 +47,11 @@ export default async function(ctx) {
   try { urlPool = JSON.parse(ctx.storage.get(urlPoolKey) || '[]'); } catch (_) {}
   let index = parseInt(ctx.storage.get(indexKey) || '0');
 
-  const lastRequest   = parseInt(ctx.storage.get(cooldownKey) || '0');
-  const expired       = cooldown === 0 || (Date.now() - lastRequest) >= cooldown;
-  const configSig     = `${batch}|${r18}|${keywords}|${imageSize}|${aspectRatio}`;
-  const configChanged = configSig !== (ctx.storage.get(configKey) || '');
+  const lastRequestStr = ctx.storage.get(cooldownKey);
+  const lastRequest    = lastRequestStr ? parseInt(lastRequestStr) : 0;
+  const expired        = cooldown === 0 || (Date.now() - lastRequest) >= cooldown;
+  const configSig      = `${batch}|${r18}|${keywords}|${imageSize}|${aspectRatio}`;
+  const configChanged  = configSig !== (ctx.storage.get(configKey) || '');
 
   if (expired || configChanged) {
     for (let i = 0; i < urlPool.length; i++) {
@@ -101,7 +89,7 @@ export default async function(ctx) {
         index = 0;
         ctx.storage.set(urlPoolKey, JSON.stringify(urlPool));
         ctx.storage.set(indexKey, '0');
-        ctx.storage.set(cooldownKey, String(Date.now()));
+        ctx.storage.set(cooldownKey, String(Date.now())); // 仅在真正请求后写入
         ctx.storage.set(configKey, configSig);
       }
 
@@ -112,9 +100,9 @@ export default async function(ctx) {
 
   if (urlPool.length === 0) return buildErrorWidget('暂无图片');
 
+  // 修复：index 归零不重置 cooldown
   if (index >= urlPool.length) {
     index = 0;
-    ctx.storage.set(cooldownKey, String(Date.now()));
   }
 
   const picUrl    = urlPool[index];

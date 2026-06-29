@@ -1,4 +1,4 @@
-// NetSpeed 小组件（Ai 更改）
+// NetSpeed 小组件（Ai 更改 v2）
 // 测试网络下载速度
 //
 // 环境变量（在 Egern UI 小组件设置里添加）：
@@ -33,11 +33,24 @@ export default async function(ctx) {
   const elapsed = (Date.now() - (speedData.timestamp || 0)) / 1000 / 60;
   const intervalExpired = REFRESH_INTERVAL_MIN === 0 || elapsed >= REFRESH_INTERVAL_MIN;
 
-  // 查询出口 IP（极小请求，用于检测是否换节点）
+  // 查询出口 IP：轮询多个地址，避免缓存问题
+  const IP_URLS = [
+    'http://eth0.me',
+    'http://ip.tyk.nu',
+    'http://checkip.amazonaws.com',
+    'http://ipecho.net/ip',
+  ];
+  const IP_INDEX_KEY = 'netspeed_ip_index';
+  let ipIndex = 0;
+  try { ipIndex = (ctx.storage.getJSON(IP_INDEX_KEY) || 0) % IP_URLS.length; } catch(e) {}
+  ctx.storage.setJSON(IP_INDEX_KEY, (ipIndex + 1) % IP_URLS.length);
+
   let outboundIP = '';
   try {
-    const resp = await ctx.http.get('http://ipecho.net/ip', { timeout: 5000 });
-    outboundIP = (await resp.text()).trim();
+    const resp = await ctx.http.get(IP_URLS[ipIndex], { headers: { 'Cache-Control': 'no-cache' }, timeout: 5000 });
+    const raw = (await resp.text()).trim();
+    const match = raw.match(/\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/);
+    outboundIP = match ? match[1] : '';
   } catch(e) {}
 
   // 网络指纹：Wi-Fi BSSID + 出口 IP，任意一项变化视为换节点/换网络

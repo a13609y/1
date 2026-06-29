@@ -1,16 +1,17 @@
 /**
- * ⛽ 全国实时油价小组件
+ * ⛽ 全国实时油价小组件v3
  * 数据源：http://m.qiyoujiage.com/
  * 脚本作者：Egern 群友 tg://user?id=5122789128
- * 由 iBL3ND 二次修改后 Ai 再次修改
- * 
+ * 由 iBL3ND 二次修改
+ *
  * 🔧 功能特性：
  * - 支持全国所有省份和城市
  * - 标题自动显示当前填写的地区
  * - 实时显示 92/95/98 号汽油和柴油价格
  * - 深色模式自动适配
  * - 全 iPhone 机型适配
- * 
+ * - 小号组件：2×2 田字格布局
+ *
  * 📚 使用教程
  * ═══════════════════════════════════════════════════
  *
@@ -182,67 +183,111 @@ export default async function (ctx) {
 
   const titleText = regionName ? `${regionName}实时油价` : "实时油价";
 
-  const rows = [
-    { label:"92 号", price:prices.p92,    color:COLORS.p92    },
-    { label:"95 号", price:prices.p95,    color:COLORS.p95    },
-    { label:"98 号", price:prices.p98,    color:COLORS.p98    },
+  const allRows = [
+    { label:"92号", price:prices.p92,    color:COLORS.p92    },
+    { label:"95号", price:prices.p95,    color:COLORS.p95    },
+    { label:"98号", price:prices.p98,    color:COLORS.p98    },
     { label:"柴油",  price:prices.diesel, color:COLORS.diesel },
-  ].filter(r => r.price !== null);
+  ];
 
   // ════════════════════════════════════════════════════════════
-  // 小尺寸（systemSmall）专用布局（已去掉“实时”二字）
+  // 小尺寸（systemSmall）专用布局：2×2 田字格
   // ════════════════════════════════════════════════════════════
   if (isSmall) {
 
-    function priceRowSmall(row) {
+    // 单个田字格卡片：上方标签 + 下方价格，撑满格子
+    function gridCell(row) {
       return {
         type: "stack",
-        direction: "row",
+        direction: "column",
         alignItems: "center",
-        padding: [4, 8, 4, 8],
+        flex: 1,
+        padding: [6, 4, 6, 4],
         backgroundColor: COLORS.card,
-        borderRadius: 8,
+        borderRadius: 10,
         borderWidth: 0.5,
         borderColor: COLORS.cardBorder,
-        gap: 6,
+        gap: 3,
         children: [
+          // 油品标签（带色条背景）
           {
             type: "stack",
             direction: "row",
             alignItems: "center",
-            width: 36,
-            height: 16,
+            padding: [2, 6, 2, 6],
             backgroundColor: { light: row.color.light + "22", dark: row.color.dark + "22" },
-            borderRadius: 4,
+            borderRadius: 5,
             borderWidth: 0.5,
-            borderColor: { light: row.color.light + "66", dark: row.color.dark + "66" },
+            borderColor: { light: row.color.light + "55", dark: row.color.dark + "55" },
             children: [{
               type: "text",
               text: row.label,
               font: { size: "caption2", weight: "bold" },
               textColor: row.color,
-              textAlign: "center"
+              textAlign: "center",
+              maxLines: 1
             }]
           },
-          { type: "spacer" },
+          // 价格数字
           {
             type: "text",
             text: row.price !== null ? row.price.toFixed(2) : "--",
-            font: { size: "footnote", weight: "semibold" },
+            font: { size: "title3", weight: "semibold" },
             textColor: COLORS.primary,
-            textAlign: "right",
-            maxLines: 1
-          },
-          {
-            type: "text",
-            text: "元",
-            font: { size: "caption2" },
-            textColor: COLORS.tertiary,
-            maxLines: 1
+            textAlign: "center",
+            maxLines: 1,
+            minScale: 0.7
           }
         ]
       };
     }
+
+    // 用前4条数据填充田字格（不足时用占位格）
+    const cells = [0, 1, 2, 3].map(i => {
+      const row = allRows[i];
+      if (row) return gridCell(row);
+      // 空格占位
+      return {
+        type: "stack",
+        flex: 1,
+        backgroundColor: COLORS.card,
+        borderRadius: 10,
+        borderWidth: 0.5,
+        borderColor: COLORS.cardBorder,
+        children: []
+      };
+    });
+
+    // 第一行：92、95
+    const row1 = {
+      type: "stack",
+      direction: "row",
+      flex: 1,
+      gap: 5,
+      children: [cells[0], cells[1]]
+    };
+
+    // 第二行：98、柴油
+    const row2 = {
+      type: "stack",
+      direction: "row",
+      flex: 1,
+      gap: 5,
+      children: [cells[2], cells[3]]
+    };
+
+    // 错误占位
+    const errorView = {
+      type: "stack",
+      direction: "column",
+      alignItems: "center",
+      flex: 1,
+      gap: 4,
+      children: [
+        { type: "image", src: "sf-symbol:exclamationmark.triangle.fill", width: 20, height: 20, color: COLORS.p98 },
+        { type: "text", text: fetchError ? "获取失败" : "暂无数据", font: { size: "caption2" }, textColor: COLORS.secondary }
+      ]
+    };
 
     return {
       type: "widget",
@@ -252,7 +297,7 @@ export default async function (ctx) {
       refreshAfter: refreshTime,
       children: [
 
-        // ── 顶部：图标 + 标题 ──────────────────────────────────
+        // ── 顶部：图标 + 地区 + 时间 ─────────────────────────────
         {
           type: "stack",
           direction: "row",
@@ -268,7 +313,6 @@ export default async function (ctx) {
             },
             {
               type: "text",
-              // ✨ 修改处：这里去掉了“实时”两个字
               text: regionName ? `${regionName}油价` : "油价",
               font: { size: "caption2", weight: "semibold" },
               textColor: COLORS.secondary,
@@ -276,7 +320,6 @@ export default async function (ctx) {
               minScale: 0.85
             },
             { type: "spacer" },
-            // 刷新图标
             {
               type: "image",
               src: "sf-symbol:arrow.clockwise",
@@ -294,7 +337,7 @@ export default async function (ctx) {
           ]
         },
 
-        // ── 调价趋势（标题正下方横排）────────────────────────────
+        // ── 调价趋势（可选，显示在标题下方）─────────────────────────
         ...(SHOW_TREND && trendInfo ? [{
           type: "stack",
           direction: "row",
@@ -309,34 +352,21 @@ export default async function (ctx) {
           }]
         }] : []),
 
-        // ── 价格列表区（flex:1 撑满剩余空间，内部竖排）──────────
-        {
-          type: "stack",
-          direction: "column",
-          flex: 1,
-          gap: 4,
-          children: rows.length > 0
-            ? rows.map(priceRowSmall)
-            : [{
-                type: "stack",
-                direction: "column",
-                alignItems: "center",
-                flex: 1,
-                children: [
-                  { type: "image", src: "sf-symbol:exclamationmark.triangle.fill", width: 18, height: 18, color: COLORS.p98 },
-                  { type: "text", text: fetchError ? "获取失败" : "暂无数据", font: { size: "caption2" }, textColor: COLORS.secondary }
-                ]
-              }]
-        },
-
+        // ── 2×2 田字格主体 ────────────────────────────────────
+        ...(allRows.some(r => r.price !== null)
+          ? [row1, row2]
+          : [errorView]
+        )
 
       ]
     };
   }
 
   // ════════════════════════════════════════════════════════════
-  // 中/大尺寸：原始逻辑完全不动（未作任何修改）
+  // 中/大尺寸：原始逻辑完全不动
   // ════════════════════════════════════════════════════════════
+
+  const rows = allRows.filter(r => r.price !== null);
 
   function priceCard(row) {
     return {

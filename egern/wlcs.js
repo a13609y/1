@@ -1,4 +1,4 @@
-// NetSpeed 小组件（Ai 更改 v2）
+// NetSpeed 小组件（Ai 更改 V1）
 // 测试网络下载速度
 //
 // 环境变量（在 Egern UI 小组件设置里添加）：
@@ -11,103 +11,93 @@
 //   值：  测速文件大小（MB），不填默认 3
 //         例如填 10 = 下载 10MB 进行测速（结果更准但更费流量）
 //
-//   注：换节点 / 换网络会自动忽略冷却时间强制重测
+//   注：换节点 / 换 Wi-Fi 会自动忽略冷却时间强制重测
 
 export default async function(ctx) {
-  // 测速间隔（分钟），从环境变量读取，0 = 每次刷新都测速
+  // ── 配置 ────────────────────────────────────────────
   const REFRESH_INTERVAL_MIN = Math.max(0, parseFloat(ctx.env.REFRESH_INTERVAL) || 0);
-
   const MB = Math.max(1, parseFloat(ctx.env.SPEED_MB) || 3);
   const BYTES = MB * 1024 * 1024;
-  const SPEED_TEST_URL = `https://speed.cloudflare.com/__down?bytes=${BYTES}`;
-  const WARMUP_URL = 'https://speed.cloudflare.com/__down?bytes=1048576';
-  const CACHE_KEY = 'netspeed_cache';
 
-  // 读取缓存
-  let speedData = { mbps: 0, mBs: 0, duration: 0, timestamp: 0, fingerprint: '' };
+  const WARMUP_URL    = `https://speed.cloudflare.com/__down?bytes=1048576`;
+  const SPEED_URL     = `https://speed.cloudflare.com/__down?bytes=${BYTES}`;
+  const IP_URL        = `http://ipecho.net/ip?_=${Date.now()}`;
+  const CACHE_KEY     = 'netspeed_cache';
+
+  // ── 读取缓存 ─────────────────────────────────────────
+  let cache = { mbps: 0, mBs: 0, duration: 0, timestamp: 0, fingerprint: '' };
   try {
-    const cached = ctx.storage.getJSON(CACHE_KEY);
-    if (cached) speedData = cached;
+    const saved = ctx.storage.getJSON(CACHE_KEY);
+    if (saved) cache = saved;
   } catch(e) {}
 
-  const elapsed = (Date.now() - (speedData.timestamp || 0)) / 1000 / 60;
-  const intervalExpired = REFRESH_INTERVAL_MIN === 0 || elapsed >= REFRESH_INTERVAL_MIN;
-
-  // 查询出口 IP：轮询多个地址，避免缓存问题
-  const IP_URLS = [
-    'http://eth0.me',
-    'http://ip.tyk.nu',
-    'http://checkip.amazonaws.com',
-    'http://ipecho.net/ip',
-  ];
-  const IP_INDEX_KEY = 'netspeed_ip_index';
-  let ipIndex = 0;
-  try { ipIndex = (ctx.storage.getJSON(IP_INDEX_KEY) || 0) % IP_URLS.length; } catch(e) {}
-  ctx.storage.setJSON(IP_INDEX_KEY, (ipIndex + 1) % IP_URLS.length);
-
+  // ── 出口 IP（用于检测换节点） ─────────────────────────
   let outboundIP = '';
   try {
-    const resp = await ctx.http.get(IP_URLS[ipIndex], { headers: { 'Cache-Control': 'no-cache' }, timeout: 5000 });
+    const resp = await ctx.http.get(IP_URL, {
+      headers: { 'Cache-Control': 'no-cache' },
+      timeout: 5000
+    });
     const raw = (await resp.text()).trim();
     const match = raw.match(/\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/);
     outboundIP = match ? match[1] : '';
   } catch(e) {}
 
-  // 网络指纹：Wi-Fi BSSID + 出口 IP，任意一项变化视为换节点/换网络
-  const fingerprint = [ctx.device.wifi.bssid || '', outboundIP].join('|');
-  const networkChanged = fingerprint !== (speedData.fingerprint || '');
-  const shouldTest = networkChanged || intervalExpired;
+  // ── 判断是否需要测速 ─────────────────────────────────
+  const fingerprint   = [ctx.device.wifi.bssid || '', outboundIP].join('|');
+  const networkChanged = fingerprint !== (cache.fingerprint || '');
+  const elapsed       = (Date.now() - (cache.timestamp || 0)) / 1000 / 60;
+  const intervalExpired = REFRESH_INTERVAL_MIN === 0 || elapsed >= REFRESH_INTERVAL_MIN;
+  const shouldTest    = networkChanged || intervalExpired;
 
+  // ── 测速 ─────────────────────────────────────────────
+  if (shouldTest) {
+    try {
+      // 预热：1MB，建立并预热 TCP 连接
+      await ctx.http.get(WARMUP_URL, {
+        headers: { 'Cache-Control': 'no-cache' },
+        timeout: 15000
+      });
 
-  if (shouldTest) try {
-    // 预热请求：1MB，建立 TCP 连接，让正式测速复用这条连接
-    await ctx.http.get(WARMUP_URL, {
-      headers: { 'Cache-Control': 'no-cache' },
-      timeout: 10000
-    });
+      // 正式测速：复用预热连接，计时更接近纯传输速度
+      const start = Date.now();
+      await ctx.http.get(SPEED_URL, {
+        headers: { 'Cache-Control': 'no-cache' },
+        timeout: 30000
+      });
+      const duration = (Date.now() - start) / 1000;
+      const speedMBs = MB / duration;
+      const speedMbps = speedMBs * 8;
 
-    // 正式测速：连接已预热，测速 1 次
-    const t1Start = Date.now();
-    await ctx.http.get(SPEED_TEST_URL, { headers: { 'Cache-Control': 'no-cache' }, timeout: 30000 });
-    const duration = (Date.now() - t1Start) / 1000;
-    const speedMBs = MB / duration;
-    const speedMbps = speedMBs * 8;
-
-    speedData = {
-      mbps: parseFloat(speedMbps.toFixed(1)),
-      mBs: parseFloat(speedMBs.toFixed(2)),
-      duration: duration.toFixed(2),
-      timestamp: Date.now(),
-      fingerprint
-    };
-
-    ctx.storage.setJSON(CACHE_KEY, speedData);
-  } catch(e) {}
-
-  let icon = 'tortoise';
-  let color = '#FF9500';
-
-  if (speedData.mbps >= 50) {
-    icon = 'bolt.fill';
-    color = '#34C759';
-  } else if (speedData.mbps >= 10) {
-    icon = 'hare.fill';
-    color = '#007AFF';
+      cache = {
+        mbps: parseFloat(speedMbps.toFixed(1)),
+        mBs:  parseFloat(speedMBs.toFixed(2)),
+        duration: duration.toFixed(2),
+        timestamp: Date.now(),
+        fingerprint
+      };
+      ctx.storage.setJSON(CACHE_KEY, cache);
+    } catch(e) {}
   }
+
+  // ── 样式变量 ─────────────────────────────────────────
+  let icon  = 'tortoise';
+  let color = '#FF9500';
+  if (cache.mbps >= 50) { icon = 'bolt.fill';  color = '#34C759'; }
+  else if (cache.mbps >= 10) { icon = 'hare.fill'; color = '#007AFF'; }
 
   const isSmall  = ctx.widgetFamily === 'systemSmall';
   const isMedium = ctx.widgetFamily === 'systemMedium';
 
-  const lastTestISO = speedData.timestamp ? new Date(speedData.timestamp).toISOString() : new Date().toISOString();
-
-  // 通用背景色
-  const bg = { light: '#FFFFFF', dark: '#1C1C1E' };
-  // 次要文字色
-  const subColor = { light: '#8E8E93', dark: '#636366' };
-  // 主文字色
+  const bg         = { light: '#FFFFFF', dark: '#1C1C1E' };
+  const subColor   = { light: '#8E8E93', dark: '#636366' };
   const primaryColor = { light: '#1C1C1E', dark: '#F2F2F7' };
 
-  // ── 顶部标题行 ──────────────────────────────────────
+  const lastTestISO = cache.timestamp
+    ? new Date(cache.timestamp).toISOString()
+    : new Date().toISOString();
+
+  // ── 顶部标题行 ────────────────────────────────────────
   const headerRow = {
     type: 'stack',
     direction: 'row',
@@ -175,7 +165,7 @@ export default async function(ctx) {
     ]
   };
 
-  // ── 速度数字块：数字极大，Mbps 置于数字正下方 ────────────
+  // ── 速度数字块 ────────────────────────────────────────
   const makeSpeedBlock = (numSize, unitSize) => ({
     type: 'stack',
     direction: 'row',
@@ -190,7 +180,7 @@ export default async function(ctx) {
         children: [
           {
             type: 'text',
-            text: `${speedData.mbps}`,
+            text: `${cache.mbps}`,
             font: { size: numSize, weight: 'heavy' },
             textColor: color,
             textAlign: 'center',
@@ -227,7 +217,7 @@ export default async function(ctx) {
       },
       {
         type: 'text',
-        text: `${speedData.mBs} MB/s`,
+        text: `${cache.mBs} MB/s`,
         font: { size: isSmall ? 'caption2' : 'footnote', weight: 'medium' },
         textColor: subColor,
         maxLines: 1
@@ -242,7 +232,7 @@ export default async function(ctx) {
       },
       {
         type: 'text',
-        text: `${speedData.duration}s`,
+        text: `${cache.duration}s`,
         font: { size: isSmall ? 'caption2' : 'footnote', weight: 'medium' },
         textColor: subColor,
         maxLines: 1
@@ -264,14 +254,11 @@ export default async function(ctx) {
           direction: 'row',
           alignItems: 'center',
           flex: 1,
-          gap: 0,
           children: [
-            // 左：超大速度数字
             {
               type: 'stack',
               direction: 'column',
               flex: 1,
-              gap: 0,
               children: [
                 { type: 'spacer' },
                 {
@@ -288,7 +275,7 @@ export default async function(ctx) {
                       children: [
                         {
                           type: 'text',
-                          text: `${speedData.mbps}`,
+                          text: `${cache.mbps}`,
                           font: { size: 80, weight: 'heavy' },
                           textColor: color,
                           textAlign: 'center',
@@ -311,13 +298,11 @@ export default async function(ctx) {
                 { type: 'spacer' }
               ]
             },
-            // 分隔线
             {
               type: 'stack',
               width: 1,
               backgroundColor: { light: '#E5E5EA', dark: '#38383A' }
             },
-            // 右：详情
             {
               type: 'stack',
               direction: 'column',
@@ -340,7 +325,7 @@ export default async function(ctx) {
                     },
                     {
                       type: 'text',
-                      text: `${speedData.mBs} MB/s`,
+                      text: `${cache.mBs} MB/s`,
                       font: { size: 'title3', weight: 'bold' },
                       textColor: primaryColor,
                       maxLines: 1
@@ -361,7 +346,7 @@ export default async function(ctx) {
                     },
                     {
                       type: 'text',
-                      text: `${speedData.duration}s`,
+                      text: `${cache.duration}s`,
                       font: { size: 'title3', weight: 'bold' },
                       textColor: primaryColor,
                       maxLines: 1
@@ -378,7 +363,6 @@ export default async function(ctx) {
   }
 
   // ── 小号 / 大号：垂直布局 ─────────────────────────────
-  // 小号 56，大号 90
   const numSize  = isSmall ? 56 : 90;
   const unitSize = isSmall ? 12 : 16;
 

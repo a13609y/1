@@ -9,7 +9,8 @@
 ^https:\/\/api\.pingmeapp\.net\/app\/queryBalanceAndBonus url script-request-header https://raw.githubusercontent.com/fmz200/wool_scripts/main/Scripts/cookie/get_cookie.js
 
 [task_local]
-30 8,20 * * * https://raw.githubusercontent.com/fmz200/wool_scripts/main/Scripts/PingMe/PingMeSignin.js, img-url=https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/apps/PingMe.png, tag=PingMe签到, enabled=true
+* * * * * https://raw.githubusercontent.com/fmz200/wool_scripts/main/Scripts/PingMe/PingMeSignin.js, img-url=https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/apps/PingMe.png, tag=PingMe签到, enabled=true
+（cron 改为每分钟触发一次，脚本内部会自行判断"今天是否到了滚动后的签到分钟"，非目标分钟直接跳过）
 
 [MITM]
 hostname = api.pingmeapp.net
@@ -25,8 +26,43 @@ $.nodeNotifyMsg = []; // nodeJS合并通知
 const ckKey = 'pingme_capture_v3';
 const SECRET = '0fOiukQq7jXZV2GRi9LGlO';
 
-// 执行开始
-startTasks().then(r => $.done());
+/*
+  滚动签到时间设置：
+  - 配合 cron: "* * * * *"（每分钟触发一次）使用，脚本自己判断"现在是不是该签到的时刻"，
+    不是就直接结束，不发通知、不请求接口，几乎零开销。
+  - 从 START_DATE 这天开始固定为 BASE_HOUR:BASE_MINUTE，此后每天签到时间自动 +1 分钟；
+    到 59 分之后不是回绕到 0 分，而是绕回 BASE_MINUTE（即 30 分）重新开始，
+    例如 8:30 -> 8:31 -> ... -> 8:59 -> 8:30 -> 8:31 ...，30 天一个完整循环。
+  - 只需要改 START_DATE / BASE_HOUR / BASE_MINUTE 三个常量即可调整起始时间。
+*/
+const BASE_HOUR = 8;          // 固定的小时，不会变
+const BASE_MINUTE = 30;       // 起始分钟，也是回绕后重新开始的分钟
+const START_DATE = '2026-07-06'; // 锚点日期（从这天开始按 BASE_MINUTE 起步）
+const CYCLE_LENGTH = 60 - BASE_MINUTE; // 循环长度：从 BASE_MINUTE 到 59，共 30 天一轮
+
+function getTodayTargetMinute() {
+    const start = new Date(START_DATE + 'T00:00:00');
+    const now = new Date();
+    const startMidnight = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+    const nowMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const daysPassed = Math.round((nowMidnight - startMidnight) / 86400000);
+    return BASE_MINUTE + (((daysPassed % CYCLE_LENGTH) + CYCLE_LENGTH) % CYCLE_LENGTH);
+}
+
+function shouldRunNow() {
+    const now = new Date();
+    const targetMinute = getTodayTargetMinute();
+    console.log(`当前时间 ${now.getHours()}:${now.getMinutes()}，今日目标签到时间 ${BASE_HOUR}:${targetMinute}`);
+    return now.getHours() === BASE_HOUR && now.getMinutes() === targetMinute;
+}
+
+// 执行开始：每分钟被调用一次，只有到了今天该签到的那一分钟才会真正执行
+if (shouldRunNow()) {
+    startTasks().then(r => $.done());
+} else {
+    console.log('未到今日签到时刻，跳过本次运行');
+    $.done();
+}
 
 async function startTasks() {
     console.log("开始运行签到");

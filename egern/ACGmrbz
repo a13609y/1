@@ -1,0 +1,244 @@
+// ACG 壁纸小组件 - Egern generic 脚本
+// 移植自 https://github.com/MolTau9527/Scripting-Tools 的 WallpaperWidget
+//
+// 支持的环境变量（ctx.env，均为字符串）：
+//   IMAGE_ID         指定图片 ID（1-9999），留空/无效则随机
+//   AUTO_REFRESH     "true" / "false"，是否自动刷新
+//   REFRESH_INTERVAL 刷新间隔（秒），仅在 AUTO_REFRESH=true 时生效
+//   WALLPAPER_FIT    "auto"（默认）/ "cover" / "contain"
+//                    - cover：裁剪铺满整个小组件（可能裁掉画面边缘）
+//                    - contain：完整显示整张图（不裁剪，多余部分留白）
+//                    - auto：small/large（接近正方形）用 contain 避免裁太多，
+//                            medium（细长条，接近原图比例）用 cover 铺满
+//
+// 数据来源：https://www.loliapi.com/acg/pc/
+//
+// 关于裁剪问题：loliapi 提供的是 PC 端横向图（约 16:9），而 systemSmall /
+// systemLarge 小组件接近正方形。Egern 的 `backgroundImage` 属性没有
+// resizeMode 控制项（固定类似 cover 裁剪铺满），横图硬塞进正方形会裁掉
+// 大量画面。因此这里改用 `image` 元素 + 按 ctx.widgetFamily 显式设置的
+// 宽高 + 可控的 resizeMode，从根源解决"显示不全"的问题。
+
+// ===== 常量 =====
+const API_BASE_URL = "https://www.loliapi.com/acg/pc/";
+const MIN_ID = 1;
+const MAX_RANDOM_ID = 9999;
+const MIN_REFRESH_INTERVAL = 60;
+const MAX_REFRESH_INTERVAL = 3600;
+const DEFAULT_REFRESH_SECONDS = 300;
+const FETCH_TIMEOUT_MS = 8000;
+const STORAGE_KEY = "acg_wallpaper_cache";
+
+// ===== 工具函数 =====
+
+function generateRandomId() {
+  return Math.floor(Math.random() * MAX_RANDOM_ID) + MIN_ID;
+}
+
+// 纯 JS 实现的 ArrayBuffer -> Base64，不依赖 btoa/Buffer 是否存在
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const chars =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let result = "";
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b1 = bytes[i];
+    const b2 = i + 1 < bytes.length ? bytes[i + 1] : 0;
+    const b3 = i + 2 < bytes.length ? bytes[i + 2] : 0;
+    const triplet = (b1 << 16) | (b2 << 8) | b3;
+    result += chars[(triplet >> 18) & 0x3f];
+    result += chars[(triplet >> 12) & 0x3f];
+    result += i + 1 < bytes.length ? chars[(triplet >> 6) & 0x3f] : "=";
+    result += i + 2 < bytes.length ? chars[triplet & 0x3f] : "=";
+  }
+  return result;
+}
+
+// 从 URL 推断 MIME 类型，失败回退到 image/jpeg
+function inferMimeType(url) {
+  const clean = url.split("#")[0].split("?")[0].toLowerCase();
+  if (clean.endsWith(".png")) return "image/png";
+  if (clean.endsWith(".webp")) return "image/webp";
+  if (clean.endsWith(".gif")) return "image/gif";
+  return "image/jpeg";
+}
+
+// 解析形如 "300 (5分钟)" 或 "300" 的字符串，取开头的数字
+function parseLeadingInt(str) {
+  const n = parseInt(str, 10);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+// 各小组件尺寸的近似参考宽高（points）。
+// Egern 文档的 ctx.widgetFamily 只给出尺寸系列名称，不提供精确像素值，
+// 这里用 Apple 公开的常见参考尺寸做近似。因为下面用的是 resizeMode，
+// "contain" 只做等比缩放不裁剪，即便这个尺寸和设备实际值有些许出入，
+// 也只会让留白多一点/少一点，不会导致画面被裁掉。
+const FAMILY_SIZES = {
+  systemSmall: { width: 158, height: 158 },
+  systemMedium: { width: 338, height: 158 },
+  systemLarge: { width: 338, height: 354 },
+  systemExtraLarge: { width: 715, height: 354 },
+};
+
+function getFrameSize(family) {
+  return FAMILY_SIZES[family] || FAMILY_SIZES.systemMedium;
+}
+
+// 根据用户设置 / 小组件尺寸，决定图片适配方式
+function resolveFitMode(env, family) {
+  const pref = (env.WALLPAPER_FIT || "").trim().toLowerCase();
+  if (pref === "cover" || pref === "contain") return pref;
+
+  // auto：接近正方形的尺寸用 contain，避免横图被过度裁剪；
+  // medium 本身细长、接近原图比例，用 cover 铺满效果更好
+  if (family === "systemSmall" || family === "systemLarge") return "contain";
+  return "cover";
+}
+
+// ===== 主逻辑 =====
+
+export default async function (ctx) {
+  const env = ctx.env || {};
+  let dataUri = null;
+
+  try {
+    const rawId = parseLeadingInt(env.IMAGE_ID ?? "");
+    const id =
+      Number.isFinite(rawId) && rawId >= MIN_ID && rawId <= MAX_RANDOM_ID
+        ? rawId
+        : generateRandomId();
+
+    const apiUrl = `${API_BASE_URL}?id=${id}&type=json`;
+    const apiResp = await ctx.http.get(apiUrl, { timeout: FETCH_TIMEOUT_MS });
+    if (apiResp.status < 200 || apiResp.status >= 300) {
+      throw new Error("接口请求失败, 状态码: " + apiResp.status);
+    }
+    const apiData = await apiResp.json();
+    if (!apiData.url) {
+      throw new Error("接口返回的图片地址无效");
+    }
+
+    const imgResp = await ctx.http.get(apiData.url, {
+      timeout: FETCH_TIMEOUT_MS,
+    });
+    if (imgResp.status < 200 || imgResp.status >= 300) {
+      throw new Error("图片下载失败, 状态码: " + imgResp.status);
+    }
+
+    const buffer = await imgResp.arrayBuffer();
+    const base64 = arrayBufferToBase64(buffer);
+    const mimeType = inferMimeType(apiData.url);
+    dataUri = `data:${mimeType};base64,${base64}`;
+
+    // 下载成功后写入兜底缓存（仅保留最新一张，Egern 无文件系统可用）
+    ctx.storage.setJSON(STORAGE_KEY, { dataUri, timestamp: Date.now() });
+  } catch (err) {
+    console.log("加载 ACG 图片失败: " + (err && err.message ? err.message : err));
+  }
+
+  // 下载失败时回退到最近一次成功缓存的图片
+  if (!dataUri) {
+    const cached = ctx.storage.getJSON(STORAGE_KEY);
+    if (cached && cached.dataUri) {
+      dataUri = cached.dataUri;
+    }
+  }
+
+  // ---- 计算刷新时间 ----
+  const autoRefresh = env.AUTO_REFRESH === "true";
+  let refreshAfter;
+
+  if (!dataUri) {
+    // 彻底失败（无图可显示，也无缓存），强制 5 分钟后重试
+    refreshAfter = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+  } else if (autoRefresh) {
+    const rawInterval = parseLeadingInt(env.REFRESH_INTERVAL ?? "");
+    const seconds =
+      Number.isFinite(rawInterval) &&
+      rawInterval >= MIN_REFRESH_INTERVAL &&
+      rawInterval <= MAX_REFRESH_INTERVAL
+        ? rawInterval
+        : DEFAULT_REFRESH_SECONDS;
+    refreshAfter = new Date(Date.now() + seconds * 1000).toISOString();
+  }
+  // 未开启自动刷新且已有图片时不设置 refreshAfter，交由系统默认刷新策略
+
+  // ---- 加载失败态 ----
+  if (!dataUri) {
+    return {
+      type: "widget",
+      padding: 0,
+      backgroundColor: { light: "#F2F2F7", dark: "#1C1C1E" },
+      refreshAfter,
+      children: [
+        {
+          type: "stack",
+          direction: "column",
+          alignItems: "center",
+          gap: 8,
+          flex: 1,
+          children: [
+            { type: "spacer" },
+            {
+              type: "image",
+              src: "sf-symbol:photo",
+              width: 40,
+              height: 40,
+              color: { light: "#C7C7CC", dark: "#48484A" },
+            },
+            {
+              type: "text",
+              text: "加载失败",
+              font: { size: "caption1" },
+              textColor: { light: "#8E8E93", dark: "#636366" },
+            },
+            { type: "spacer" },
+          ],
+        },
+      ],
+    };
+  }
+
+  // ---- 正常展示 ----
+  // accessory 系列（锁屏）不适合展示大图壁纸，直接给出提示，避免渲染诡异效果
+  if (ctx.widgetFamily && ctx.widgetFamily.startsWith("accessory")) {
+    return {
+      type: "widget",
+      padding: 16,
+      children: [
+        {
+          type: "text",
+          text: "壁纸组件暂不支持锁屏尺寸",
+          font: { size: "caption1" },
+          textColor: { light: "#8E8E93", dark: "#636366" },
+          textAlign: "center",
+        },
+      ],
+    };
+  }
+
+  const family = ctx.widgetFamily || "systemMedium";
+  const frame = getFrameSize(family);
+  const fitMode = resolveFitMode(env, family);
+
+  const widget = {
+    type: "widget",
+    padding: 0,
+    // 用作 contain 模式下的留白底色，cover 模式下基本不可见
+    backgroundColor: { light: "#000000", dark: "#000000" },
+    children: [
+      {
+        type: "image",
+        src: dataUri,
+        width: frame.width,
+        height: frame.height,
+        resizeMode: fitMode,
+      },
+    ],
+  };
+  if (refreshAfter) {
+    widget.refreshAfter = refreshAfter;
+  }
+  return widget;
+}

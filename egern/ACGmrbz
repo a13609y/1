@@ -96,73 +96,123 @@ function resolveFitMode(env, family) {
   return "cover";
 }
 
+// 实际请求一张新图片（成功返回 data URI，失败抛错）
+async function fetchFreshImage(ctx, requestedId) {
+  const rawId = parseLeadingInt(requestedId ?? "");
+  const id =
+    Number.isFinite(rawId) && rawId >= MIN_ID && rawId <= MAX_RANDOM_ID
+      ? rawId
+      : generateRandomId();
+
+  const apiUrl = `${API_BASE_URL}?id=${id}&type=json`;
+  const apiResp = await ctx.http.get(apiUrl, { timeout: FETCH_TIMEOUT_MS });
+  if (apiResp.status < 200 || apiResp.status >= 300) {
+    throw new Error("接口请求失败, 状态码: " + apiResp.status);
+  }
+  const apiData = await apiResp.json();
+  if (!apiData.url) {
+    throw new Error("接口返回的图片地址无效");
+  }
+
+  const imgResp = await ctx.http.get(apiData.url, { timeout: FETCH_TIMEOUT_MS });
+  if (imgResp.status < 200 || imgResp.status >= 300) {
+    throw new Error("图片下载失败, 状态码: " + imgResp.status);
+  }
+
+  const buffer = await imgResp.arrayBuffer();
+  const base64 = arrayBufferToBase64(buffer);
+  const mimeType = inferMimeType(apiData.url);
+  return `data:${mimeType};base64,${base64}`;
+}
+
 // ===== 主逻辑 =====
 
 export default async function (ctx) {
   const env = ctx.env || {};
-  let dataUri = null;
-
-  try {
-    const rawId = parseLeadingInt(env.IMAGE_ID ?? "");
-    const id =
-      Number.isFinite(rawId) && rawId >= MIN_ID && rawId <= MAX_RANDOM_ID
-        ? rawId
-        : generateRandomId();
-
-    const apiUrl = `${API_BASE_URL}?id=${id}&type=json`;
-    const apiResp = await ctx.http.get(apiUrl, { timeout: FETCH_TIMEOUT_MS });
-    if (apiResp.status < 200 || apiResp.status >= 300) {
-      throw new Error("接口请求失败, 状态码: " + apiResp.status);
-    }
-    const apiData = await apiResp.json();
-    if (!apiData.url) {
-      throw new Error("接口返回的图片地址无效");
-    }
-
-    const imgResp = await ctx.http.get(apiData.url, {
-      timeout: FETCH_TIMEOUT_MS,
-    });
-    if (imgResp.status < 200 || imgResp.status >= 300) {
-      throw new Error("图片下载失败, 状态码: " + imgResp.status);
-    }
-
-    const buffer = await imgResp.arrayBuffer();
-    const base64 = arrayBufferToBase64(buffer);
-    const mimeType = inferMimeType(apiData.url);
-    dataUri = `data:${mimeType};base64,${base64}`;
-
-    // 下载成功后写入兜底缓存（仅保留最新一张，Egern 无文件系统可用）
-    ctx.storage.setJSON(STORAGE_KEY, { dataUri, timestamp: Date.now() });
-  } catch (err) {
-    console.log("加载 ACG 图片失败: " + (err && err.message ? err.message : err));
-  }
-
-  // 下载失败时回退到最近一次成功缓存的图片
-  if (!dataUri) {
-    const cached = ctx.storage.getJSON(STORAGE_KEY);
-    if (cached && cached.dataUri) {
-      dataUri = cached.dataUri;
-    }
-  }
-
-  // ---- 计算刷新时间 ----
+  const requestedId = (env.IMAGE_ID ?? "").trim();
   const autoRefresh = env.AUTO_REFRESH === "true";
-  let refreshAfter;
+  const now = Date.now();
 
-  if (!dataUri) {
-    // 彻底失败（无图可显示，也无缓存），强制 5 分钟后重试
-    refreshAfter = new Date(Date.now() + 5 * 60 * 1000).toISOString();
-  } else if (autoRefresh) {
-    const rawInterval = parseLeadingInt(env.REFRESH_INTERVAL ?? "");
-    const seconds =
-      Number.isFinite(rawInterval) &&
-      rawInterval >= MIN_REFRESH_INTERVAL &&
-      rawInterval <= MAX_REFRESH_INTERVAL
-        ? rawInterval
-        : DEFAULT_REFRESH_SECONDS;
-    refreshAfter = new Date(Date.now() + seconds * 1000).toISOString();
+  // 读取缓存：{ dataUri, requestedId, nextRefreshAt, fetchedAt }
+  // Egern 对不存在的 key 可能直接返回 null，也可能抛错，这里统一按"无缓存"处理
+  let cached = null;
+  try {
+    cached = ctx.storage.getJSON(STORAGE_KEY);
+  } catch (e) {
+    cached = null;
   }
-  // 未开启自动刷新且已有图片时不设置 refreshAfter，交由系统默认刷新策略
+
+  // 判断这次是否真的需要发网络请求换一张新图：
+  //   1. 完全没有缓存（首次运行）
+  //   2. 用户改了「图片 ID」设置（含随机<->指定的切换），立即生效
+  //   3. 开启了自动刷新，且已经到了上次计算出的下次刷新时间点
+  // 除此之外的任何调用（系统额外触发、手动测试、编辑小组件等）都只复用缓存，
+  // 这样才不会出现"请求一次就换一张图"的问题
+  let shouldFetch = false;
+  if (!cached || !cached.dataUri) {
+    shouldFetch = true;
+  } else if (cached.requestedId !== requestedId) {
+    shouldFetch = true;
+  } else if (
+    autoRefresh &&
+    cached.nextRefreshAt &&
+    now >= Date.parse(cached.nextRefreshAt)
+  ) {
+    shouldFetch = true;
+  }
+
+  let dataUri = cached && cached.dataUri ? cached.dataUri : null;
+
+  if (shouldFetch) {
+    try {
+      dataUri = await fetchFreshImage(ctx, requestedId);
+    } catch (err) {
+      console.log(
+        "加载 ACG 图片失败: " + (err && err.message ? err.message : err)
+      );
+      // 请求失败则继续使用旧缓存（如果有）
+    }
+  }
+
+  // ---- 计算下次该换图的时间点 ----
+  let nextRefreshAt = null;
+  if (!dataUri) {
+    // 彻底失败（没有新图也没有缓存），强制 5 分钟后重试
+    nextRefreshAt = new Date(now + 5 * 60 * 1000).toISOString();
+  } else if (autoRefresh) {
+    if (shouldFetch || !cached || !cached.nextRefreshAt) {
+      // 刚换了新图，或者之前没有计时基准（比如刚打开自动刷新），重新起算间隔
+      const rawInterval = parseLeadingInt(env.REFRESH_INTERVAL ?? "");
+      const seconds =
+        Number.isFinite(rawInterval) &&
+        rawInterval >= MIN_REFRESH_INTERVAL &&
+        rawInterval <= MAX_REFRESH_INTERVAL
+          ? rawInterval
+          : DEFAULT_REFRESH_SECONDS;
+      nextRefreshAt = new Date(now + seconds * 1000).toISOString();
+    } else {
+      // 沿用上次算好的时间点，避免每次调用都把刷新时间往后推
+      nextRefreshAt = cached.nextRefreshAt;
+    }
+  }
+  // 未开启自动刷新时 nextRefreshAt 保持 null，图片将一直保持不变，
+  // 直到用户手动修改「图片 ID」
+
+  // 写回缓存
+  if (dataUri) {
+    try {
+      ctx.storage.setJSON(STORAGE_KEY, {
+        dataUri,
+        requestedId,
+        nextRefreshAt,
+        fetchedAt: shouldFetch ? now : (cached && cached.fetchedAt) || now,
+      });
+    } catch (e) {
+      console.log("写入缓存失败: " + (e && e.message ? e.message : e));
+    }
+  }
+
+  const refreshAfter = nextRefreshAt || undefined;
 
   // ---- 加载失败态 ----
   if (!dataUri) {

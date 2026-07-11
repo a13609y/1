@@ -1,4 +1,4 @@
-// NetSpeed 小组件（Ai 更改 V1）
+// NetSpeed 小组件（Ai 更改 V2）
 // 测试网络下载速度
 //
 // 环境变量（在 Egern UI 小组件设置里添加）：
@@ -21,8 +21,13 @@ export default async function(ctx) {
 
   const WARMUP_URL    = `https://speed.cloudflare.com/__down?bytes=1048576`;
   const SPEED_URL     = `https://speed.cloudflare.com/__down?bytes=${BYTES}`;
+  const FALLBACK_URL  = 'https://hil.proof.ovh.us/files/1Mb.dat';
   const IP_URL        = `http://ipecho.net/ip?_=${Date.now()}`;
   const CACHE_KEY     = 'netspeed_cache';
+
+  // 主源（含预热）超时阈值；备用源沿用 30 秒总超时
+  const PRIMARY_TIMEOUT  = 10000;
+  const FALLBACK_TIMEOUT = 30000;
 
   // ── 读取缓存 ─────────────────────────────────────────
   let cache = { mbps: 0, mBs: 0, duration: 0, timestamp: 0, fingerprint: '' };
@@ -53,21 +58,42 @@ export default async function(ctx) {
   // ── 测速 ─────────────────────────────────────────────
   if (shouldTest) {
     try {
-      // 预热：1MB，建立并预热 TCP 连接
-      await ctx.http.get(WARMUP_URL, {
-        headers: { 'Cache-Control': 'no-cache' },
-        timeout: 15000
-      });
+      let speedMBs, speedMbps, duration;
 
-      // 正式测速：复用预热连接，计时更接近纯传输速度
-      const start = Date.now();
-      await ctx.http.get(SPEED_URL, {
-        headers: { 'Cache-Control': 'no-cache' },
-        timeout: 30000
-      });
-      const duration = (Date.now() - start) / 1000;
-      const speedMBs = MB / duration;
-      const speedMbps = speedMBs * 8;
+      try {
+        // 预热：1MB，建立并预热 TCP 连接
+        await ctx.http.get(WARMUP_URL, {
+          headers: { 'Cache-Control': 'no-cache' },
+          timeout: PRIMARY_TIMEOUT
+        });
+
+        // 正式测速：复用预热连接，计时更接近纯传输速度
+        const start = Date.now();
+        await ctx.http.get(SPEED_URL, {
+          headers: { 'Cache-Control': 'no-cache' },
+          timeout: PRIMARY_TIMEOUT
+        });
+        duration  = (Date.now() - start) / 1000;
+        speedMBs  = MB / duration;
+        speedMbps = speedMBs * 8;
+
+      } catch(e) {
+        // 主源失败 / 超时，切换备用源
+        // 同样先预热一次建立 TCP 连接，再计时正式测速
+        await ctx.http.get(FALLBACK_URL, {
+          headers: { 'Cache-Control': 'no-cache' },
+          timeout: FALLBACK_TIMEOUT
+        });
+        const start = Date.now();
+        const resp  = await ctx.http.get(FALLBACK_URL, {
+          headers: { 'Cache-Control': 'no-cache' },
+          timeout: FALLBACK_TIMEOUT
+        });
+        const buf  = await resp.arrayBuffer();
+        duration   = (Date.now() - start) / 1000;
+        speedMBs   = (buf.byteLength / 1024 / 1024) / duration;
+        speedMbps  = speedMBs * 8;
+      }
 
       cache = {
         mbps: parseFloat(speedMbps.toFixed(1)),

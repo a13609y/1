@@ -1,5 +1,5 @@
 // ==UserScript==
-// @Name         每日色图小组件 v3（由 ai 编写适配 iPhone 端）
+// @Name         每日美图小组件 v4（由 ai 编写适配 iPhone 端，修复 404 问题）
 // @Platform     Egern
 // @Type         generic
 // @Author       Cuttlefish (改编为 Egern 版本)
@@ -33,50 +33,44 @@ const MAX_HISTORY = 10;
 
 export default async function(ctx) {
   // ── 读取环境变量 ──────────────────────────────────────────
-  const apiKey  = ctx.env.API_KEY  || '';           // lolicon API Key（可选）
-  const r18     = ctx.env.R18      || '2';           // R18 模式：0/1/2
-  const keywords = ctx.env.KEYWORDS || '';           // 标签关键词，| 分隔
-  const batch   = Math.min(20, Math.max(1, parseInt(ctx.env.BATCH || '1'))); // 单次请求图片数，1~20
+  const apiKey   = ctx.env.API_KEY  || '';
+  const r18      = ctx.env.R18      || '2';
+  const keywords = ctx.env.KEYWORDS || '';
+  const batch    = Math.min(20, Math.max(1, parseInt(ctx.env.BATCH || '1')));
 
-  // cooldown 为 0 表示每次都请求；否则最小 1 分钟，转换为毫秒
   const rawCooldown = parseInt(ctx.env.COOLDOWN || '5');
   const cooldown    = rawCooldown === 0 ? 0 : Math.max(1, rawCooldown) * 60 * 1000;
 
-  // 从 | 分隔的关键词中随机取一个
   const tagList = keywords.split('|').map(t => t.trim()).filter(Boolean);
   const keyword = tagList.length > 0
     ? tagList[Math.floor(Math.random() * tagList.length)]
     : '';
 
   // ── 小组件尺寸 ────────────────────────────────────────────
-  const family = ctx.widgetFamily; // systemSmall / systemMedium / systemLarge 等
+  const family = ctx.widgetFamily;
 
-  // 锁屏小组件：返回占位图标
   if (family === 'accessoryRectangular' || family === 'accessoryCircular') {
     return { type: 'widget', children: [{ type: 'image', src: 'sf-symbol:photo.artframe', width: 28, height: 28 }] };
   }
-  // 锁屏行内小组件：返回文字
   if (family === 'accessoryInline') {
     return { type: 'widget', children: [{ type: 'text', text: '每日色图', maxLines: 1 }] };
   }
 
-  // 中号用横图，小号/大号用方形图
   let aspectRatio;
   if (family === 'systemMedium') {
-    aspectRatio = 'gt1.6lt2.4'; // 横图
+    aspectRatio = 'gt1.6lt2.4';
   } else {
-    aspectRatio = 'gt0.8lt1.3'; // 方形图
+    aspectRatio = 'gt0.8lt1.3';
   }
 
-  // small 用 small 尺寸图片，其余用 regular
   const imageSize = (family === 'systemSmall') ? 'small' : 'regular';
 
   // ── Storage Key ───────────────────────────────────────────
-  const urlPoolKey  = `setu_urls_${family}`;      // 当前图片 URL 池
-  const indexKey    = `setu_index_${family}`;     // 下一张图片的下标
-  const cooldownKey = `setu_cooldown_${family}`;  // 上次请求时间戳
-  const configKey   = `setu_config_${family}`;    // 配置签名（检测变更用）
-  const historyKey  = `setu_history_${family}`;   // 去重历史记录
+  const urlPoolKey  = `setu_urls_${family}`;
+  const indexKey    = `setu_index_${family}`;
+  const cooldownKey = `setu_cooldown_${family}`;
+  const configKey   = `setu_config_${family}`;
+  const historyKey  = `setu_history_${family}`;
 
   // ── 读取持久化数据 ─────────────────────────────────────────
   let urlPool = [];
@@ -84,118 +78,139 @@ export default async function(ctx) {
 
   let index = parseInt(ctx.storage.get(indexKey) || '0');
 
-  // 去重历史：已展示过的图片 URL 列表
   let history = [];
   try { history = JSON.parse(ctx.storage.get(historyKey) || '[]'); } catch (_) {}
-  const historySet = new Set(history); // 用 Set 加速查重
+  const historySet = new Set(history);
+
+  // ── 请求 API 拉新图池 ─────────────────────────────────────
+  async function fetchNewPool() {
+    for (let i = 0; i < urlPool.length; i++) {
+      ctx.storage.delete(`setu_img_${family}_${i}`);
+    }
+    const body = {
+      r18: parseInt(r18),
+      num: batch,
+      size: [imageSize],
+      aspectRatio: [aspectRatio]
+    };
+    if (apiKey)  body.apikey = apiKey;
+    if (keyword) body.tag = [[keyword]];
+
+    const resp = await ctx.http.post('https://api.lolicon.app/setu/v2', {
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15'
+      },
+      body: JSON.stringify(body)
+    });
+    const obj = await resp.json();
+
+    if (obj.error) throw new Error(obj.error);
+    if (!obj.data || obj.data.length === 0) throw new Error('No data');
+
+    let newUrls = obj.data
+      .map(pic => pic.urls?.[imageSize] || pic.urls?.original || '')
+      .filter(Boolean)
+      .filter(url => !historySet.has(url));
+
+    if (newUrls.length === 0) {
+      history = [];
+      historySet.clear();
+      ctx.storage.set(historyKey, '[]');
+      newUrls = obj.data
+        .map(pic => pic.urls?.[imageSize] || pic.urls?.original || '')
+        .filter(Boolean);
+    }
+
+    if (newUrls.length > 0) {
+      urlPool = newUrls.sort(() => Math.random() - 0.5);
+      index = 0;
+      ctx.storage.set(urlPoolKey, JSON.stringify(urlPool));
+      ctx.storage.set(indexKey, '0');
+      ctx.storage.set(cooldownKey, String(Date.now()));
+      ctx.storage.set(configKey, configSig);
+    }
+  }
 
   // ── 判断是否需要重新请求 API ──────────────────────────────
   const lastRequestStr = ctx.storage.get(cooldownKey);
   const lastRequest    = lastRequestStr ? parseInt(lastRequestStr) : 0;
-  const expired        = cooldown === 0 || (Date.now() - lastRequest) >= cooldown; // 冷却是否到期
+  const expired        = cooldown === 0 || (Date.now() - lastRequest) >= cooldown;
 
-  // 配置签名：任意参数变化时强制刷新
   const configSig     = `${batch}|${r18}|${keywords}|${imageSize}|${aspectRatio}`;
   const configChanged = configSig !== (ctx.storage.get(configKey) || '');
 
   if (expired || configChanged) {
-    // 清除旧图片的 base64 缓存
-    for (let i = 0; i < urlPool.length; i++) {
-      ctx.storage.delete(`setu_img_${family}_${i}`);
-    }
-
     try {
-      // 构造请求体
-      const body = {
-        r18: parseInt(r18),
-        num: batch,
-        size: [imageSize],
-        aspectRatio: [aspectRatio]
-      };
-      if (apiKey)  body.apikey = apiKey;
-      if (keyword) body.tag = [[keyword]];
-
-      const resp = await ctx.http.post('https://api.lolicon.app/setu/v2', {
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15'
-        },
-        body: JSON.stringify(body)
-      });
-      const obj = await resp.json();
-
-      if (obj.error) throw new Error(obj.error);
-      if (!obj.data || obj.data.length === 0) throw new Error('No data');
-
-      // 提取 URL，过滤掉历史中已展示过的，避免重复
-      let newUrls = obj.data
-        .map(pic => pic.urls?.[imageSize] || pic.urls?.original || '')
-        .filter(Boolean)
-        .filter(url => !historySet.has(url)); // 去重过滤
-
-      // 如果全部被过滤（历史太满），清空历史重来
-      if (newUrls.length === 0) {
-        history = [];
-        historySet.clear();
-        ctx.storage.set(historyKey, '[]');
-        newUrls = obj.data
-          .map(pic => pic.urls?.[imageSize] || pic.urls?.original || '')
-          .filter(Boolean);
-      }
-
-      if (newUrls.length > 0) {
-        // 随机打乱，避免每次从同一张开始
-        urlPool = newUrls.sort(() => Math.random() - 0.5);
-        index = 0;
-        ctx.storage.set(urlPoolKey, JSON.stringify(urlPool));
-        ctx.storage.set(indexKey, '0');
-        ctx.storage.set(cooldownKey, String(Date.now())); // 记录本次请求时间
-        ctx.storage.set(configKey, configSig);
-      }
-
+      await fetchNewPool();
     } catch (e) {
-      // 请求失败且无历史池子可用时，显示错误
       if (urlPool.length === 0) return buildErrorWidget(e.message || '请求失败');
     }
   }
 
   if (urlPool.length === 0) return buildErrorWidget('暂无图片');
 
-  // index 越界时归零（不重置 cooldown，只是翻页）
   if (index >= urlPool.length) {
     index = 0;
   }
 
-  const picUrl    = urlPool[index];
-  const nextIndex = (index + 1) % urlPool.length; // 预加载的下一张下标
+  // ── 读取或下载当前图片（带 404 剔除重试）────────────────────
+  const MAX_RETRY = 5;
+  let base64;
+  let validIndex = index;
+
+  for (let attempt = 0; attempt < Math.min(MAX_RETRY, urlPool.length); attempt++) {
+    const tryUrl      = urlPool[validIndex];
+    const imgCacheKey = `setu_img_${family}_${validIndex}`;
+    const imgCache    = ctx.storage.getJSON(imgCacheKey);
+
+    if (imgCache?.url === tryUrl && imgCache?.base64) {
+      // 命中缓存，直接用
+      base64 = imgCache.base64;
+      break;
+    }
+
+    try {
+      base64 = await downloadBase64(ctx, tryUrl);
+      ctx.storage.setJSON(imgCacheKey, { url: tryUrl, base64 });
+      break; // 下载成功，跳出重试
+    } catch (e) {
+      // 下载失败（404 等），把这张从池子里剔除
+      ctx.storage.delete(imgCacheKey);
+      urlPool.splice(validIndex, 1);
+
+      if (urlPool.length === 0) {
+        // 池子空了，立刻重新请求 API 拉一批新图
+        try {
+          await fetchNewPool();
+        } catch (_) {}
+        if (urlPool.length === 0) return buildErrorWidget('图片均已失效且拉取新图失败，请稍后重试');
+        validIndex = 0;
+        break; // 跳出重试循环，用新池子里的第一张
+      }
+
+      // splice 后当前位置已是下一张，index 不变
+      if (validIndex >= urlPool.length) validIndex = 0;
+
+      // 持久化剔除后的池子
+      ctx.storage.set(urlPoolKey, JSON.stringify(urlPool));
+    }
+  }
+
+  if (!base64) return buildErrorWidget('图片加载失败，请稍后重试');
+
+  const picUrl    = urlPool[validIndex];
+  const nextIndex = (validIndex + 1) % urlPool.length;
   const nextUrl   = urlPool[nextIndex];
 
-  // 更新下标（存 index+1，下次进来直接用）
-  ctx.storage.set(indexKey, String(index + 1));
+  // 更新下标（存下一张的位置）
+  ctx.storage.set(indexKey, String(nextIndex));
 
   // ── 将当前图加入历史记录 ──────────────────────────────────
   if (!historySet.has(picUrl)) {
     history.push(picUrl);
-    if (history.length > MAX_HISTORY) history.shift(); // 超出上限，丢最旧的
+    if (history.length > MAX_HISTORY) history.shift();
     ctx.storage.set(historyKey, JSON.stringify(history));
-  }
-
-  // ── 读取或下载当前图片的 base64 缓存 ──────────────────────
-  const imgCacheKey = `setu_img_${family}_${index}`;
-  const imgCache    = ctx.storage.getJSON(imgCacheKey);
-
-  let base64;
-
-  if (imgCache?.url === picUrl && imgCache?.base64) {
-    // 命中缓存
-    base64 = imgCache.base64;
-  } else {
-    try {
-      base64 = await downloadBase64(ctx, picUrl);
-      ctx.storage.setJSON(imgCacheKey, { url: picUrl, base64 });
-    } catch (e) {
-      return buildErrorWidget('图片下载失败');
-    }
   }
 
   // ── 构造小组件返回值 ──────────────────────────────────────
@@ -203,7 +218,7 @@ export default async function(ctx) {
     type: 'widget',
     backgroundImage: `data:image/jpeg;base64,${base64}`,
     padding: 0,
-    url: picUrl,   // 点击小组件时在浏览器打开原图
+    url: picUrl,
     children: []
   };
 
@@ -222,8 +237,12 @@ export default async function(ctx) {
 // ── 工具函数：下载图片并转为 base64 字符串 ────────────────────
 async function downloadBase64(ctx, url) {
   const imgResp = await ctx.http.get(url, {
-    headers: { 'Referer': 'https://www.pixiv.net/' } // Pixiv 图片需要带 Referer
+    headers: { 'Referer': 'https://www.pixiv.net/' }
   });
+  // 检查 HTTP 状态码，非 2xx 视为失败
+  if (imgResp.status && imgResp.status >= 400) {
+    throw new Error(`HTTP ${imgResp.status}`);
+  }
   const buffer = await imgResp.arrayBuffer();
   const bytes  = new Uint8Array(buffer);
   let binary   = '';

@@ -7,24 +7,22 @@
 // ==/UserScript==
 
 // ============================================================
-// 环境变量说明（与 Generic 脚本共享同一套 Env）
+// 环境变量说明（与 Generic 脚本共享）
 // ============================================================
-// API_KEY      可选  你的 lolicon API Key
-// R18          可选  0=仅非R18 1=仅R18 2=混合  默认：2
-// KEYWORDS     可选  搜索标签，多个标签用 | 分隔
-// BATCH        可选  每次请求图片数量  默认：1  范围：1~20
-// MAX_HISTORY  可选  历史去重最大记录数  默认：10
-// FAMILIES     可选  要处理的小组件尺寸，多个用 | 分隔
-//              默认：systemMedium
-//              示例：systemSmall|systemMedium|systemLarge
+// API_KEY      可选
+// R18          可选  0/1/2  默认：2
+// KEYWORDS     可选
+// BATCH        可选  默认：10
+// MAX_HISTORY  可选  默认：50
+// FAMILIES     可选  默认：systemMedium  多个用 | 分隔
 // ============================================================
 
 export default async function(ctx) {
   const apiKey     = ctx.env.API_KEY    || '';
   const r18        = ctx.env.R18        || '2';
   const keywords   = ctx.env.KEYWORDS   || '';
-  const batch      = Math.min(20, Math.max(1, parseInt(ctx.env.BATCH      || '1')));
-  const maxHistory = Math.max(1,           parseInt(ctx.env.MAX_HISTORY   || '10'));
+  const batch      = Math.min(20, Math.max(1, parseInt(ctx.env.BATCH      || '10')));
+  const maxHistory = Math.max(1,           parseInt(ctx.env.MAX_HISTORY   || '50'));
 
   const familiesRaw = ctx.env.FAMILIES || 'systemMedium';
   const families    = familiesRaw.split('|').map(f => f.trim()).filter(Boolean);
@@ -34,7 +32,6 @@ export default async function(ctx) {
     ? tagList[Math.floor(Math.random() * tagList.length)]
     : '';
 
-  // ── 工具：下载图片转 base64 ────────────────────────────────
   async function downloadBase64(url) {
     const imgResp = await ctx.http.get(url, {
       headers: { 'Referer': 'https://www.pixiv.net/' }
@@ -51,9 +48,8 @@ export default async function(ctx) {
     return btoa(binary);
   }
 
-  // ── 对每个 family 处理 ────────────────────────────────────
   for (const family of families) {
-    const imageSize  = (family === 'systemSmall') ? 'small' : 'regular';
+    const imageSize   = (family === 'systemSmall') ? 'small' : 'regular';
     const aspectRatio = (family === 'systemMedium') ? 'gt1.6lt2.4' : 'gt0.8lt1.3';
 
     const urlPoolKey  = `setu_urls_${family}`;
@@ -73,7 +69,6 @@ export default async function(ctx) {
 
     const configSig = `${batch}|${r18}|${keywords}|${imageSize}|${aspectRatio}`;
 
-    // ── 拉新图池 ──────────────────────────────────────────────
     async function fetchNewPool() {
       for (let i = 0; i < urlPool.length; i++) {
         ctx.storage.delete(`setu_img_${family}_${i}`);
@@ -100,8 +95,6 @@ export default async function(ctx) {
       if (obj.error) throw new Error(obj.error);
       if (!obj.data || obj.data.length === 0) throw new Error('No data');
 
-      const effectiveMaxHistory = Math.min(maxHistory, obj.data.length - 1);
-
       let newUrls = obj.data
         .map(pic => pic.urls?.[imageSize] || pic.urls?.original || '')
         .filter(Boolean)
@@ -123,21 +116,17 @@ export default async function(ctx) {
       ctx.storage.set(indexKey,    '0');
       ctx.storage.set(cooldownKey, String(Date.now()));
       ctx.storage.set(configKey,   configSig);
-
-      return effectiveMaxHistory;
     }
 
-    // ── 确保当前图和下一张都已缓存 ───────────────────────────
-    // 如果池子空了或只剩最后一张，提前拉新池
+    // 池子空了，拉新池
     if (urlPool.length === 0) {
       try { await fetchNewPool(); } catch (_) { continue; }
     }
 
-    // 池子只剩当前这张（下一张已没有），提前拉新池备用
-    // 注意：不改 index，只是把新池存好，Generic 脚本用完当前这张后自然会用新池
+    // 下一张已经是池子最后一张，提前拉新池备用
     if (index + 1 >= urlPool.length) {
       try { await fetchNewPool(); } catch (_) {}
-      // 新池拉好后，下载新池第 0 张（即将成为 Generic 换图后的第一张）
+      // 缓存新池第 0 张
       if (urlPool.length > 0) {
         const cacheKey = `setu_img_${family}_0`;
         const cached   = ctx.storage.getJSON(cacheKey);
@@ -151,7 +140,7 @@ export default async function(ctx) {
       continue;
     }
 
-    // 下载并缓存下一张（Generic 脚本换图时直接读，秒切）
+    // 下载并缓存下一张
     const nextIndex    = index + 1;
     const nextUrl      = urlPool[nextIndex];
     const nextCacheKey = `setu_img_${family}_${nextIndex}`;

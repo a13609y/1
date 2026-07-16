@@ -1,0 +1,62 @@
+name: "每日美图小组件"
+description: "基于 lolicon API 的每日美图小组件，支持多尺寸、历史去重、自动预缓存"
+author: "Cuttlefish"
+homepage: "https://api.lolicon.app/#/setu"
+icon: "photo.artframe"
+
+compat_arguments:
+  COOLDOWN: "60"
+  WIDGET_SCRIPT_URL: "https://raw.githubusercontent.com/example/setu/main/setu_widget.js"
+  SCHEDULE_SCRIPT_URL: "https://raw.githubusercontent.com/example/setu/main/setu_schedule.js"
+
+env_schema:
+  API_KEY:
+    name: API Key
+    description: lolicon API Key，不填也可使用但有次数限制
+    default_value: ""
+  R18:
+    name: R18 模式
+    description: 0=仅非R18 1=仅R18 2=混合
+    default_value: "2"
+    options:
+      - "0"
+      - "1"
+      - "2"
+  KEYWORDS:
+    name: 关键词
+    description: 搜索标签，多个标签用 | 分隔，每次随机选一个。示例：初音ミク|エミリア
+    default_value: ""
+  BATCH:
+    name: 每批图片数量
+    description: 每次从 API 拉取的图片数量，范围 1~20
+    default_value: "10"
+  MAX_HISTORY:
+    name: 历史去重数量
+    description: 记住多少张已展示过的图片用于去重
+    default_value: "50"
+  COOLDOWN:
+    name: 换图间隔（分钟）
+    description: 每张图展示多少分钟后切换到下一张
+    default_value: "60"
+  FAMILIES:
+    name: 小组件尺寸
+    description: 要处理的小组件尺寸，多个用 | 分隔
+    default_value: "systemMedium"
+    options:
+      - "systemSmall"
+      - "systemMedium"
+      - "systemLarge"
+      - "systemSmall|systemMedium"
+      - "systemSmall|systemMedium|systemLarge"
+
+scriptings:
+  - schedule:
+      name: "每日美图预缓存"
+      cron: "0 */{{{COOLDOWN}}} * * *"
+      script_url: "{{{SCHEDULE_SCRIPT_URL}}}"
+      timeout: 120
+
+widgets:
+  - name: "每日美图"
+    script_url: "{{{WIDGET_SCRIPT_URL}}}"
+    timeout: 60

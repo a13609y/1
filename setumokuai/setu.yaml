@@ -5,7 +5,7 @@ homepage: "https://api.lolicon.app/#/setu"
 icon: "photo.artframe"
 
 compat_arguments:
-  COOLDOWN: "60"
+  COOLDOWN: "1"
   WIDGET_SCRIPT_URL: "https://raw.githubusercontent.com/a13609y/1/refs/heads/main/setumokuai/setu_widget.js"
   SCHEDULE_SCRIPT_URL: "https://raw.githubusercontent.com/a13609y/1/refs/heads/main/setumokuai/setu_schedule.js"
 
@@ -35,9 +35,17 @@ env_schema:
     description: 记住多少张已展示过的图片用于去重
     default_value: "50"
   COOLDOWN:
-    name: 换图间隔（分钟）
-    description: 每张图展示多少分钟后切换到下一张
-    default_value: "60"
+    name: 换图间隔（小时）
+    description: 每张图展示多少小时后切换，合法值：1/2/3/4/6/8/12
+    default_value: "1"
+    options:
+      - "1"
+      - "2"
+      - "3"
+      - "4"
+      - "6"
+      - "8"
+      - "12"
   FAMILIES:
     name: 小组件尺寸
     description: 要处理的小组件尺寸，多个用 | 分隔

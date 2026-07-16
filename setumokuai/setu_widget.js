@@ -1,52 +1,38 @@
 // ==UserScript==
-// @Name         每日美图小组件 v4（由 ai 编写适配 iPhone 端，修复 404 问题）
+// @Name         每日美图小组件
 // @Platform     Egern
 // @Type         generic
-// @Author       Cuttlefish (改编为 Egern 版本)
+// @Author       Cuttlefish
 // @WebURL       https://api.lolicon.app/#/setu
 // ==/UserScript==
 
 // ============================================================
-// 环境变量说明（在 Egern 脚本 → Env 中填写）
+// 环境变量说明
 // ============================================================
-// API_KEY      可选  你的 lolicon API Key，不填也可使用但有次数限制
+// API_KEY      可选  你的 lolicon API Key
 // R18          可选  0=仅非R18 1=仅R18 2=混合  默认：2
-// KEYWORDS     可选  搜索标签，多个标签用 | 分隔，每次随机选一个
-//              示例：初音ミク|エミリア|雷電将軍
-// BATCH        可选  每次请求图片数量  默认：1  范围：1~20
-// COOLDOWN     可选  每张图展示时长（分钟）默认：5  设为 0 则每次刷新都换图
-// MAX_HISTORY  可选  历史去重最大记录数，超出后淘汰最早的记录  默认：10
-// ============================================================
-
-// ============================================================
-// Storage Key 说明
-// ============================================================
-// setu_urls_{family}      当前图片 URL 池（JSON 数组）
-// setu_index_{family}     当前显示的图片下标
-// setu_lastshow_{family}  上次换图的时间戳（毫秒）
-// setu_cooldown_{family}  上次成功请求 API 的时间戳（毫秒）
-// setu_config_{family}    上次请求时的配置签名，用于检测配置变更
-// setu_img_{family}_{i}   第 i 张图片的 base64 缓存（JSON: {url, base64}）
-// setu_history_{family}   已展示过的图片 URL 历史（JSON 数组，最多保留 MAX_HISTORY 条）
+// KEYWORDS     可选  搜索标签，多个标签用 | 分隔
+// BATCH        可选  每次请求图片数量  默认：10  范围：1~20
+// COOLDOWN     可选  每张图展示时长（小时）默认：1  设为 0 则每次刷新都换图
+// MAX_HISTORY  可选  历史去重最大记录数  默认：50
 // ============================================================
 
 export default async function(ctx) {
-  // ── 读取环境变量 ──────────────────────────────────────────
   const apiKey     = ctx.env.API_KEY    || '';
   const r18        = ctx.env.R18        || '2';
   const keywords   = ctx.env.KEYWORDS   || '';
-  const batch      = Math.min(20, Math.max(1, parseInt(ctx.env.BATCH      || '1')));
-  const maxHistory = Math.max(1,           parseInt(ctx.env.MAX_HISTORY   || '10'));
+  const batch      = Math.min(20, Math.max(1, parseInt(ctx.env.BATCH      || '10')));
+  const maxHistory = Math.max(1,           parseInt(ctx.env.MAX_HISTORY   || '50'));
 
-  const rawCooldown = parseInt(ctx.env.COOLDOWN || '5');
-  const cooldown    = rawCooldown === 0 ? 0 : Math.max(1, rawCooldown) * 60 * 1000;
+  // COOLDOWN 单位：小时
+  const rawCooldown = parseInt(ctx.env.COOLDOWN || '1');
+  const cooldown    = rawCooldown === 0 ? 0 : Math.max(1, rawCooldown) * 60 * 60 * 1000;
 
   const tagList = keywords.split('|').map(t => t.trim()).filter(Boolean);
   const keyword = tagList.length > 0
     ? tagList[Math.floor(Math.random() * tagList.length)]
     : '';
 
-  // ── 小组件尺寸 ────────────────────────────────────────────
   const family = ctx.widgetFamily;
 
   if (family === 'accessoryRectangular' || family === 'accessoryCircular') {
@@ -65,7 +51,6 @@ export default async function(ctx) {
 
   const imageSize = (family === 'systemSmall') ? 'small' : 'regular';
 
-  // ── Storage Key ───────────────────────────────────────────
   const urlPoolKey  = `setu_urls_${family}`;
   const indexKey    = `setu_index_${family}`;
   const lastShowKey = `setu_lastshow_${family}`;
@@ -73,7 +58,6 @@ export default async function(ctx) {
   const configKey   = `setu_config_${family}`;
   const historyKey  = `setu_history_${family}`;
 
-  // ── 读取持久化数据 ─────────────────────────────────────────
   let urlPool = [];
   try { urlPool = JSON.parse(ctx.storage.get(urlPoolKey) || '[]'); } catch (_) {}
 
@@ -83,11 +67,9 @@ export default async function(ctx) {
   try { history = JSON.parse(ctx.storage.get(historyKey) || '[]'); } catch (_) {}
   const historySet = new Set(history);
 
-  // ── 配置签名 ──────────────────────────────────────────────
   const configSig     = `${batch}|${r18}|${keywords}|${imageSize}|${aspectRatio}`;
   const configChanged = configSig !== (ctx.storage.get(configKey) || '');
 
-  // ── 工具：下载图片转 base64 ────────────────────────────────
   async function downloadBase64(url) {
     const imgResp = await ctx.http.get(url, {
       headers: { 'Referer': 'https://www.pixiv.net/' }
@@ -104,10 +86,7 @@ export default async function(ctx) {
     return btoa(binary);
   }
 
-  // ── 请求 API 拉新图池 ─────────────────────────────────────
-  // 拉完后立即下载并缓存第 0 张，确保首次显示秒切
   async function fetchNewPool() {
-    // 清除旧缓存
     for (let i = 0; i < urlPool.length; i++) {
       ctx.storage.delete(`setu_img_${family}_${i}`);
     }
@@ -153,20 +132,18 @@ export default async function(ctx) {
 
     urlPool = newUrls.sort(() => Math.random() - 0.5);
     index   = 0;
-    ctx.storage.set(urlPoolKey, JSON.stringify(urlPool));
-    ctx.storage.set(indexKey,   '0');
+    ctx.storage.set(urlPoolKey,  JSON.stringify(urlPool));
+    ctx.storage.set(indexKey,    '0');
     ctx.storage.set(cooldownKey, String(Date.now()));
     ctx.storage.set(configKey,   configSig);
 
     return effectiveMaxHistory;
   }
 
-  // ── 判断是否到了换图时间 ──────────────────────────────────
   const lastShowStr   = ctx.storage.get(lastShowKey);
   const lastShow      = lastShowStr ? parseInt(lastShowStr) : 0;
   const shouldAdvance = cooldown === 0 || (Date.now() - lastShow) >= cooldown;
 
-  // ── 换图 / 拉新池 逻辑 ────────────────────────────────────
   let effectiveMaxHistory = maxHistory;
 
   if (shouldAdvance || configChanged) {
@@ -176,22 +153,18 @@ export default async function(ctx) {
       ctx.storage.set(indexKey,    String(index));
       ctx.storage.set(lastShowKey, String(Date.now()));
     } else {
-      // 池子用完或配置变更，重新拉 API
       try {
         effectiveMaxHistory = await fetchNewPool();
         ctx.storage.set(lastShowKey, String(Date.now()));
       } catch (e) {
         if (urlPool.length === 0) return buildErrorWidget(e.message || '请求失败');
-        // 拉取失败但本地还有缓存，继续使用，不推进 index
       }
     }
   }
-  // 冷却期内：什么都不做，直接读当前 index 的缓存显示
 
   if (urlPool.length === 0) return buildErrorWidget('暂无图片');
   if (index >= urlPool.length) index = 0;
 
-  // ── 读取当前图片缓存（带 404 剔除重试）────────────────────
   const MAX_RETRY = 5;
   let base64;
   let validIndex = index;
@@ -233,14 +206,12 @@ export default async function(ctx) {
 
   const picUrl = urlPool[validIndex];
 
-  // ── 将当前图加入历史记录 ──────────────────────────────────
   if (!historySet.has(picUrl)) {
     history.push(picUrl);
     if (history.length > effectiveMaxHistory) history.shift();
     ctx.storage.set(historyKey, JSON.stringify(history));
   }
 
-  // ── 构造小组件返回值 ──────────────────────────────────────
   return {
     type: 'widget',
     backgroundImage: `data:image/jpeg;base64,${base64}`,
@@ -250,7 +221,6 @@ export default async function(ctx) {
   };
 }
 
-// ── 工具函数：构造错误提示小组件 ──────────────────────────────
 function buildErrorWidget(message) {
   return {
     type: 'widget',

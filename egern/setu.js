@@ -1,5 +1,5 @@
 // ==UserScript==
-// @Name         每日美图小组件 v6（由 ai 编写适配 iPhone 端，更改 BATCH 逻辑）
+// @Name         每日美图小组件 v7（由 ai 编写适配 iPhone 端）
 // @Platform     Egern
 // @Type         generic
 // @Author       Cuttlefish (改编为 Egern 版本)
@@ -13,7 +13,7 @@
 // R18          可选  0=仅非R18 1=仅R18 2=混合  默认：2
 // KEYWORDS     可选  搜索标签，多个标签用 | 分隔，每次随机选一个
 //              示例：初音ミク|エミリア|雷電将軍
-// BATCH        可选  每次请求图片数量（去重请设大） 默认：1  范围：1~20
+// BATCH        可选  每次请求图片数量越大越不容易重复  默认：1  范围：1~20
 // COOLDOWN     可选  每张图展示时长（分钟）默认：5  设为 0 则每次刷新都换图
 // MAX_HISTORY  可选  历史去重最大记录数，超出后淘汰最早的记录  默认：10
 // ============================================================
@@ -22,9 +22,9 @@
 // Storage Key 说明
 // ============================================================
 // setu_urls_{family}      当前图片 URL 池（JSON 数组）
-// setu_index_{family}     下一张要显示的图片下标
-// setu_cooldown_{family}  上次成功请求 API 的时间戳（毫秒）
+// setu_index_{family}     当前显示的图片下标
 // setu_lastshow_{family}  上次换图的时间戳（毫秒）
+// setu_cooldown_{family}  上次成功请求 API 的时间戳（毫秒）
 // setu_config_{family}    上次请求时的配置签名，用于检测配置变更
 // setu_img_{family}_{i}   第 i 张图片的 base64 缓存（JSON: {url, base64}）
 // setu_history_{family}   已展示过的图片 URL 历史（JSON 数组，最多保留 MAX_HISTORY 条）
@@ -32,11 +32,11 @@
 
 export default async function(ctx) {
   // ── 读取环境变量 ──────────────────────────────────────────
-  const apiKey     = ctx.env.API_KEY     || '';
-  const r18        = ctx.env.R18         || '2';
+  const apiKey     = ctx.env.API_KEY    || '';
+  const r18        = ctx.env.R18        || '2';
   const keywords   = ctx.env.KEYWORDS   || '';
-  const batch      = Math.min(20, Math.max(1, parseInt(ctx.env.BATCH       || '1')));
-  const maxHistory = Math.max(1,            parseInt(ctx.env.MAX_HISTORY   || '10'));
+  const batch      = Math.min(20, Math.max(1, parseInt(ctx.env.BATCH      || '1')));
+  const maxHistory = Math.max(1,           parseInt(ctx.env.MAX_HISTORY   || '10'));
 
   const rawCooldown = parseInt(ctx.env.COOLDOWN || '5');
   const cooldown    = rawCooldown === 0 ? 0 : Math.max(1, rawCooldown) * 60 * 1000;
@@ -68,8 +68,8 @@ export default async function(ctx) {
   // ── Storage Key ───────────────────────────────────────────
   const urlPoolKey  = `setu_urls_${family}`;
   const indexKey    = `setu_index_${family}`;
-  const cooldownKey = `setu_cooldown_${family}`;
   const lastShowKey = `setu_lastshow_${family}`;
+  const cooldownKey = `setu_cooldown_${family}`;
   const configKey   = `setu_config_${family}`;
   const historyKey  = `setu_history_${family}`;
 
@@ -84,14 +84,34 @@ export default async function(ctx) {
   const historySet = new Set(history);
 
   // ── 配置签名 ──────────────────────────────────────────────
-  const configSig = `${batch}|${r18}|${keywords}|${imageSize}|${aspectRatio}`;
+  const configSig     = `${batch}|${r18}|${keywords}|${imageSize}|${aspectRatio}`;
   const configChanged = configSig !== (ctx.storage.get(configKey) || '');
 
+  // ── 工具：下载图片转 base64 ────────────────────────────────
+  async function downloadBase64(url) {
+    const imgResp = await ctx.http.get(url, {
+      headers: { 'Referer': 'https://www.pixiv.net/' }
+    });
+    if (imgResp.status && imgResp.status >= 400) {
+      throw new Error(`HTTP ${imgResp.status}`);
+    }
+    const buffer = await imgResp.arrayBuffer();
+    const bytes  = new Uint8Array(buffer);
+    let binary   = '';
+    for (let i = 0; i < bytes.byteLength; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+  }
+
   // ── 请求 API 拉新图池 ─────────────────────────────────────
+  // 拉完后立即下载并缓存第 0 张，确保首次显示秒切
   async function fetchNewPool() {
+    // 清除旧缓存
     for (let i = 0; i < urlPool.length; i++) {
       ctx.storage.delete(`setu_img_${family}_${i}`);
     }
+
     const body = {
       r18: parseInt(r18),
       num: batch,
@@ -129,21 +149,21 @@ export default async function(ctx) {
         .filter(Boolean);
     }
 
-    if (newUrls.length > 0) {
-      urlPool = newUrls.sort(() => Math.random() - 0.5);
-      index = 0;
-      ctx.storage.set(urlPoolKey, JSON.stringify(urlPool));
-      ctx.storage.set(indexKey, '0');
-      ctx.storage.set(cooldownKey, String(Date.now()));
-      ctx.storage.set(configKey, configSig);
-    }
+    if (newUrls.length === 0) throw new Error('No valid URLs');
+
+    urlPool = newUrls.sort(() => Math.random() - 0.5);
+    index   = 0;
+    ctx.storage.set(urlPoolKey, JSON.stringify(urlPool));
+    ctx.storage.set(indexKey,   '0');
+    ctx.storage.set(cooldownKey, String(Date.now()));
+    ctx.storage.set(configKey,   configSig);
 
     return effectiveMaxHistory;
   }
 
   // ── 判断是否到了换图时间 ──────────────────────────────────
-  const lastShowStr  = ctx.storage.get(lastShowKey);
-  const lastShow     = lastShowStr ? parseInt(lastShowStr) : 0;
+  const lastShowStr   = ctx.storage.get(lastShowKey);
+  const lastShow      = lastShowStr ? parseInt(lastShowStr) : 0;
   const shouldAdvance = cooldown === 0 || (Date.now() - lastShow) >= cooldown;
 
   // ── 换图 / 拉新池 逻辑 ────────────────────────────────────
@@ -151,30 +171,27 @@ export default async function(ctx) {
 
   if (shouldAdvance || configChanged) {
     if (!configChanged && urlPool.length > 0 && index + 1 < urlPool.length) {
-      // 池子还有剩余图片，直接推进 index，不重新请求 API
+      // 池子还有剩余，推进 index
       index = index + 1;
-      ctx.storage.set(indexKey, String(index));
+      ctx.storage.set(indexKey,    String(index));
       ctx.storage.set(lastShowKey, String(Date.now()));
     } else {
-      // 池子用完了或配置变更，重新拉 API
+      // 池子用完或配置变更，重新拉 API
       try {
         effectiveMaxHistory = await fetchNewPool();
         ctx.storage.set(lastShowKey, String(Date.now()));
       } catch (e) {
         if (urlPool.length === 0) return buildErrorWidget(e.message || '请求失败');
-        // 拉取失败但本地还有缓存，继续使用本地图片，不推进 index
+        // 拉取失败但本地还有缓存，继续使用，不推进 index
       }
     }
   }
-  // shouldAdvance === false 时：冷却期内，什么都不做，显示当前 index 的图
+  // 冷却期内：什么都不做，直接读当前 index 的缓存显示
 
   if (urlPool.length === 0) return buildErrorWidget('暂无图片');
+  if (index >= urlPool.length) index = 0;
 
-  if (index >= urlPool.length) {
-    index = 0;
-  }
-
-  // ── 读取或下载当前图片（带 404 剔除重试）────────────────────
+  // ── 读取当前图片缓存（带 404 剔除重试）────────────────────
   const MAX_RETRY = 5;
   let base64;
   let validIndex = index;
@@ -190,7 +207,7 @@ export default async function(ctx) {
     }
 
     try {
-      base64 = await downloadBase64(ctx, tryUrl);
+      base64 = await downloadBase64(tryUrl);
       ctx.storage.setJSON(imgCacheKey, { url: tryUrl, base64 });
       break;
     } catch (e) {
@@ -208,16 +225,13 @@ export default async function(ctx) {
       }
 
       if (validIndex >= urlPool.length) validIndex = 0;
-
       ctx.storage.set(urlPoolKey, JSON.stringify(urlPool));
     }
   }
 
   if (!base64) return buildErrorWidget('图片加载失败，请稍后重试');
 
-  const picUrl    = urlPool[validIndex];
-  const nextIndex = (validIndex + 1) % urlPool.length;
-  const nextUrl   = urlPool[nextIndex];
+  const picUrl = urlPool[validIndex];
 
   // ── 将当前图加入历史记录 ──────────────────────────────────
   if (!historySet.has(picUrl)) {
@@ -226,42 +240,29 @@ export default async function(ctx) {
     ctx.storage.set(historyKey, JSON.stringify(history));
   }
 
+  // ── 每次运行都确保下一张已缓存，下次换图可秒切 ──────────
+  // 不管是换图还是冷却期内，只要下一张没缓存就同步下载存好
+  if (urlPool.length > 1) {
+    const nextIndex    = (validIndex + 1) % urlPool.length;
+    const nextUrl      = urlPool[nextIndex];
+    const nextCacheKey = `setu_img_${family}_${nextIndex}`;
+    const nextCache    = ctx.storage.getJSON(nextCacheKey);
+    if (!nextCache || nextCache.url !== nextUrl) {
+      try {
+        const b64 = await downloadBase64(nextUrl);
+        ctx.storage.setJSON(nextCacheKey, { url: nextUrl, base64: b64 });
+      } catch (_) {}
+    }
+  }
+
   // ── 构造小组件返回值 ──────────────────────────────────────
-  const result = {
+  return {
     type: 'widget',
     backgroundImage: `data:image/jpeg;base64,${base64}`,
     padding: 0,
     url: picUrl,
     children: []
   };
-
-  // ── 后台预加载下一张 ──────────────────────────────────────
-  const nextCacheKey = `setu_img_${family}_${nextIndex}`;
-  const nextCache    = ctx.storage.getJSON(nextCacheKey);
-  if (!nextCache || nextCache.url !== nextUrl) {
-    downloadBase64(ctx, nextUrl)
-      .then(b64 => ctx.storage.setJSON(nextCacheKey, { url: nextUrl, base64: b64 }))
-      .catch(() => {});
-  }
-
-  return result;
-}
-
-// ── 工具函数：下载图片并转为 base64 字符串 ────────────────────
-async function downloadBase64(ctx, url) {
-  const imgResp = await ctx.http.get(url, {
-    headers: { 'Referer': 'https://www.pixiv.net/' }
-  });
-  if (imgResp.status && imgResp.status >= 400) {
-    throw new Error(`HTTP ${imgResp.status}`);
-  }
-  const buffer = await imgResp.arrayBuffer();
-  const bytes  = new Uint8Array(buffer);
-  let binary   = '';
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
 }
 
 // ── 工具函数：构造错误提示小组件 ──────────────────────────────

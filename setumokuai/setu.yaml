@@ -6,8 +6,8 @@ icon: "photo.artframe"
 
 compat_arguments:
   COOLDOWN: "60"
-  WIDGET_SCRIPT_URL: "https://raw.githubusercontent.com/example/setu/main/setu_widget.js"
-  SCHEDULE_SCRIPT_URL: "https://raw.githubusercontent.com/example/setu/main/setu_schedule.js"
+  WIDGET_SCRIPT_URL: "https://raw.githubusercontent.com/a13609y/1/refs/heads/main/setumokuai/setu_widget.js"
+  SCHEDULE_SCRIPT_URL: "https://raw.githubusercontent.com/a13609y/1/refs/heads/main/setumokuai/setu_schedule.js"
 
 env_schema:
   API_KEY:

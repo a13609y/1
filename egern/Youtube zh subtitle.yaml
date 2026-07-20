@@ -1,0 +1,23 @@
+name: "YouTube 强制简体中文字幕"
+description: "强制 YouTube 显示简体中文字幕（机器翻译），由 @ZenmoFeiShi 原作，转换为 Egern 模块格式"
+author: "@ZenmoFeiShi"
+homepage: "https://github.com/ZenmoFeiShi/Qx"
+
+scriptings:
+  - http_request:
+      name: "YouTube 简体中文字幕 - 请求清理"
+      match: "^https://www\\.youtube\\.com/api/timedtext\\?.*_ytzhsub=1"
+      script_url: "https://raw.githubusercontent.com/ZenmoFeiShi/Qx/refs/heads/main/yt-sub-clean.js"
+      update_interval: 86400
+
+  - http_response:
+      name: "YouTube 简体中文字幕 - 响应注入"
+      match: "^https://www\\.youtube\\.com/api/timedtext\\?"
+      script_url: "https://raw.githubusercontent.com/ZenmoFeiShi/Qx/refs/heads/main/yt-zh-sub.js"
+      update_interval: 86400
+      body_required: true
+
+mitm:
+  hostnames:
+    includes:
+      - "www.youtube.com"

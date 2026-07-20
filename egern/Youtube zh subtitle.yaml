@@ -1,21 +1,26 @@
 name: "YouTube 强制简体中文字幕"
-description: "强制 YouTube 显示简体中文字幕（机器翻译），由 @ZenmoFeiShi 原作，转换为 Egern 模块格式"
+description: "强制 YouTube 显示简体中文机器翻译字幕。原作者 @ZenmoFeiShi，脚本已适配 Egern API。"
 author: "@ZenmoFeiShi"
 homepage: "https://github.com/ZenmoFeiShi/Qx"
+icon: "captions.bubble.fill"
 
-scriptings:
-  - http_request:
-      name: "YouTube 简体中文字幕 - 请求清理"
+# yt-sub-clean.js 原来只做一件事：删除 Cookie 请求头
+# 在 Egern 直接用 header_rewrites 的 delete 操作替代，无需脚本
+header_rewrites:
+  - delete:
       match: "^https://www\\.youtube\\.com/api/timedtext\\?.*_ytzhsub=1"
-      script_url: "https://raw.githubusercontent.com/ZenmoFeiShi/Qx/refs/heads/main/yt-sub-clean.js"
-      update_interval: 86400
+      name: Cookie
+      type: request
 
+# yt-zh-sub.js：拦截字幕响应，改发带 tlang=zh-Hans 的子请求，将简体中文字幕替换回原响应
+scriptings:
   - http_response:
-      name: "YouTube 简体中文字幕 - 响应注入"
+      name: "YouTube 简体中文字幕注入"
       match: "^https://www\\.youtube\\.com/api/timedtext\\?"
-      script_url: "https://raw.githubusercontent.com/ZenmoFeiShi/Qx/refs/heads/main/yt-zh-sub.js"
+      script_url: "https://raw.githubusercontent.com/a13609y/1/refs/heads/main/egern/Youtube.js"
       update_interval: 86400
       body_required: true
+      timeout: 15
 
 mitm:
   hostnames:

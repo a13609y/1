@@ -3,24 +3,15 @@ description: 大蓝树网站每日自动签到，支持自定义签到时间
 author: ""
 icon: checkmark.seal.fill
 
-# 参数默认值：签到时间默认 08:30
 compat_arguments:
   CHECKIN_HOUR: "8"
   CHECKIN_MINUTE: "30"
 
-# env_schema 声明 → Egern 在模块编辑页自动生成 UI 控件
-env_schema:
-  CHECKIN_HOUR:
-    name: 签到小时
-    description: 每天签到的小时（0-23，24小时制）
-    default_value: "8"
-  CHECKIN_MINUTE:
-    name: 签到分钟
-    description: 每天签到的分钟（0-59）
-    default_value: "30"
+compat_arguments_desc: |
+  CHECKIN_HOUR：签到小时（0-23，24小时制），默认 8
+  CHECKIN_MINUTE：签到分钟（0-59），默认 30
 
 scriptings:
-  # 抓取 Cookie / Token
   - http_request:
       name: 大蓝树每日签到Token
       match: ^https:\/\/dalanshu\.top\/api\/v1\/me\/checkin\/status
@@ -28,7 +19,6 @@ scriptings:
       max_size: 0
       body_required: true
 
-  # 定时签到，小时和分钟通过参数替换
   - schedule:
       name: '* 大蓝树每日签到'
       cron: "{{{CHECKIN_MINUTE}}} {{{CHECKIN_HOUR}}} * * *"

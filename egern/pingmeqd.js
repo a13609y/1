@@ -34,11 +34,16 @@ const SECRET = '0fOiukQq7jXZV2GRi9LGlO';
     此后每天签到的小时数自动 +1；到 23 点之后不是回绕到 0 点，而是绕回 BASE_HOUR（8 点）重新开始，
     例如 今天1点 -> 明天2点 -> ... -> 23点 -> 再下一天回到 8 点 -> 9 点 ...
   - 只需要改 START_DATE / BASE_HOUR / FIXED_MINUTE 三个常量即可调整起始时间。
+  - 考虑到手机息屏可能导致触发延迟（比如该 8:30 跑，实际手机 8:35 才唤醒执行），
+    额外加了一个 TOLERANCE_MINUTES 容忍窗口：只要在"目标时刻 ~ 目标时刻+容忍分钟"之间被触发，都算数；
+    同时用 LAST_RUN_KEY 记录"今天已经跑过"，避免延迟触发导致同一天内被重复签到、重复发通知。
 */
 const BASE_HOUR = 8;            // 起始小时，也是回绕后重新开始的小时
 const FIXED_MINUTE = 30;        // 固定分钟，不随天数变化
 const START_DATE = '2026-07-06'; // 锚点日期（从这天开始按 BASE_HOUR 起步）
 const CYCLE_LENGTH = 24 - BASE_HOUR; // 循环长度：从 BASE_HOUR 到 23 点，共 16 天一轮
+const TOLERANCE_MINUTES = 15;   // 允许延迟触发的容忍分钟数，超过这个窗口就不再补跑
+const LAST_RUN_KEY = 'pingme_last_run_date';
 
 function getTodayTargetHour() {
     const start = new Date(START_DATE + 'T00:00:00');
@@ -49,18 +54,41 @@ function getTodayTargetHour() {
     return BASE_HOUR + (((daysPassed % CYCLE_LENGTH) + CYCLE_LENGTH) % CYCLE_LENGTH);
 }
 
+function todayStr(now) {
+    return `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
+}
+
+function alreadyRanToday(now) {
+    const lastRun = isNode ? process.env[LAST_RUN_KEY] : $.getdata(LAST_RUN_KEY);
+    return lastRun === todayStr(now);
+}
+
+function markRanToday(now) {
+    if (isNode) return; // Node 环境（青龙）一般由 cron 自身保证不重复，跳过标记
+    $.setdata(todayStr(now), LAST_RUN_KEY);
+}
+
 function shouldRunNow() {
     const now = new Date();
     const targetHour = getTodayTargetHour();
-    console.log(`当前时间 ${now.getHours()}:${now.getMinutes()}，今日目标签到时间 ${targetHour}:${FIXED_MINUTE}`);
-    return now.getHours() === targetHour && now.getMinutes() === FIXED_MINUTE;
+    const targetTotalMinutes = targetHour * 60 + FIXED_MINUTE;
+    const nowTotalMinutes = now.getHours() * 60 + now.getMinutes();
+    const inWindow = nowTotalMinutes >= targetTotalMinutes && nowTotalMinutes <= targetTotalMinutes + TOLERANCE_MINUTES;
+    console.log(`当前时间 ${now.getHours()}:${now.getMinutes()}，今日目标签到时间 ${targetHour}:${FIXED_MINUTE}（容忍至 ${targetHour}:${FIXED_MINUTE + TOLERANCE_MINUTES}）`);
+    if (!inWindow) return false;
+    if (alreadyRanToday(now)) {
+        console.log('今天已经在容忍窗口内跑过一次了，跳过重复执行');
+        return false;
+    }
+    return true;
 }
 
-// 执行开始：每小时的 FIXED_MINUTE 分被调用一次，只有到了今天该签到的那个小时才会真正执行
+// 执行开始：每小时的 FIXED_MINUTE 分被调用一次，命中"目标小时 + 容忍窗口"且今天还没跑过才会真正执行
 if (shouldRunNow()) {
+    markRanToday(new Date());
     startTasks().then(r => $.done());
 } else {
-    console.log('未到今日签到时刻，跳过本次运行');
+    console.log('未到今日签到时刻（或已跑过），跳过本次运行');
     $.done();
 }
 

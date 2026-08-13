@@ -9,8 +9,8 @@
 ^https:\/\/api\.pingmeapp\.net\/app\/queryBalanceAndBonus url script-request-header https://raw.githubusercontent.com/fmz200/wool_scripts/main/Scripts/cookie/get_cookie.js
 
 [task_local]
-30 8-23 * * * https://raw.githubusercontent.com/fmz200/wool_scripts/main/Scripts/PingMe/PingMeSignin.js, img-url=https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/apps/PingMe.png, tag=PingMe签到, enabled=true
-（cron 改为每小时的第 30 分钟都触发一次，脚本内部会自行判断"今天是否到了滚动后的签到小时"，非目标小时直接跳过）
+30 4-23 * * * https://raw.githubusercontent.com/fmz200/wool_scripts/main/Scripts/PingMe/PingMeSignin.js, img-url=https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/apps/PingMe.png, tag=PingMe签到, enabled=true
+（cron 覆盖 4 点到 23 点，每个整点的第 30 分钟都触发一次，脚本内部会自行判断"今天是否到了滚动后的签到小时"，非目标小时直接跳过）
 
 [MITM]
 hostname = api.pingmeapp.net
@@ -38,9 +38,9 @@ const SECRET = '0fOiukQq7jXZV2GRi9LGlO';
     额外加了一个 TOLERANCE_MINUTES 容忍窗口：只要在"目标时刻 ~ 目标时刻+容忍分钟"之间被触发，都算数；
     同时用 LAST_RUN_KEY 记录"今天已经跑过"，避免延迟触发导致同一天内被重复签到、重复发通知。
 */
-const BASE_HOUR = 8;            // 起始小时，也是回绕后重新开始的小时
+const BASE_HOUR = 4;            // 起始小时，也是回绕后重新开始的小时
 const FIXED_MINUTE = 30;        // 固定分钟，不随天数变化
-const START_DATE = '2026-07-06'; // 锚点日期（从这天开始按 BASE_HOUR 起步）
+const START_DATE = '2026-07-14'; // 锚点日期（从这天开始按 BASE_HOUR 起步，即今天固定是 4:30）
 const CYCLE_LENGTH = 24 - BASE_HOUR; // 循环长度：从 BASE_HOUR 到 23 点，共 16 天一轮
 const TOLERANCE_MINUTES = 15;   // 允许延迟触发的容忍分钟数，超过这个窗口就不再补跑
 const LAST_RUN_KEY = 'pingme_last_run_date';

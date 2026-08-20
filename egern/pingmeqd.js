@@ -28,21 +28,21 @@ const SECRET = '0fOiukQq7jXZV2GRi9LGlO';
 
 /*
   滚动签到时间设置（按小时滚动）：
-  - 配合 cron: "30 8-23 * * *"（每天 8 点到 23 点，每个整点的第 30 分钟各触发一次）使用，
+  - 配合 cron: "30 4-23 * * *"（每天 4 点到 23 点，每个整点的第 30 分钟各触发一次）使用，
     脚本自己判断"现在是不是该签到的那个小时"，不是就直接结束，不发通知、不请求接口，几乎零开销。
   - 分钟固定为 FIXED_MINUTE，从 START_DATE 这天开始固定为 BASE_HOUR 点执行，
-    此后每天签到的小时数自动 +1；到 23 点之后不是回绕到 0 点，而是绕回 BASE_HOUR（8 点）重新开始，
-    例如 今天1点 -> 明天2点 -> ... -> 23点 -> 再下一天回到 8 点 -> 9 点 ...
+    此后每天签到的小时数自动 +1；到 23 点之后不是回绕到 0 点，而是绕回 BASE_HOUR（4 点）重新开始，
+    例如 今天4点半 -> 明天5点半 -> ... -> 23点半 -> 再下一天回到 4点半 -> 5点半 ...
   - 只需要改 START_DATE / BASE_HOUR / FIXED_MINUTE 三个常量即可调整起始时间。
-  - 考虑到手机息屏可能导致触发延迟（比如该 8:30 跑，实际手机 8:35 才唤醒执行），
-    额外加了一个 TOLERANCE_MINUTES 容忍窗口：只要在"目标时刻 ~ 目标时刻+容忍分钟"之间被触发，都算数；
-    同时用 LAST_RUN_KEY 记录"今天已经跑过"，避免延迟触发导致同一天内被重复签到、重复发通知。
+  - 采用"当天追赶制"应对手机息屏导致的触发延迟：只要当前时间已经过了今天的目标时刻，
+    且今天还没签到成功过，不管是哪一次整点触发命中的都会去补签，一直追到 23:30 为止；
+    只有整天设备都没被唤醒过，才会真的漏签当天（这种情况没有办法，设备完全没运行脚本）。
+    用 LAST_RUN_KEY 记录"今天已经签到过"，避免同一天内被多次触发时重复签到、重复发通知。
 */
 const BASE_HOUR = 4;            // 起始小时，也是回绕后重新开始的小时
 const FIXED_MINUTE = 30;        // 固定分钟，不随天数变化
-const START_DATE = '2026-07-14'; // 锚点日期（从这天开始按 BASE_HOUR 起步，即今天固定是 4:30）
-const CYCLE_LENGTH = 24 - BASE_HOUR; // 循环长度：从 BASE_HOUR 到 23 点，共 16 天一轮
-const TOLERANCE_MINUTES = 15;   // 允许延迟触发的容忍分钟数，超过这个窗口就不再补跑
+const START_DATE = '2026-08-14'; // 锚点日期（从这天开始按 BASE_HOUR 起步，即今天固定是 4:30）
+const CYCLE_LENGTH = 24 - BASE_HOUR; // 循环长度：从 BASE_HOUR 到 23 点，共 20 天一轮
 const LAST_RUN_KEY = 'pingme_last_run_date';
 
 function getTodayTargetHour() {
@@ -73,17 +73,19 @@ function shouldRunNow() {
     const targetHour = getTodayTargetHour();
     const targetTotalMinutes = targetHour * 60 + FIXED_MINUTE;
     const nowTotalMinutes = now.getHours() * 60 + now.getMinutes();
-    const inWindow = nowTotalMinutes >= targetTotalMinutes && nowTotalMinutes <= targetTotalMinutes + TOLERANCE_MINUTES;
-    console.log(`当前时间 ${now.getHours()}:${now.getMinutes()}，今日目标签到时间 ${targetHour}:${FIXED_MINUTE}（容忍至 ${targetHour}:${FIXED_MINUTE + TOLERANCE_MINUTES}）`);
-    if (!inWindow) return false;
+    console.log(`当前时间 ${now.getHours()}:${now.getMinutes()}，今日目标签到时间 ${targetHour}:${FIXED_MINUTE}`);
     if (alreadyRanToday(now)) {
-        console.log('今天已经在容忍窗口内跑过一次了，跳过重复执行');
+        console.log('今天已经签到过了，跳过重复执行');
         return false;
     }
-    return true;
+    if (nowTotalMinutes < targetTotalMinutes) {
+        console.log('还没到今天的目标时刻，先跳过');
+        return false; // 还没到目标时间，不提前签到
+    }
+    return true; // 已经过了目标时刻，且今天还没签到过，本次触发就去补签
 }
 
-// 执行开始：每小时的 FIXED_MINUTE 分被调用一次，命中"目标小时 + 容忍窗口"且今天还没跑过才会真正执行
+// 执行开始：每小时的 FIXED_MINUTE 分被调用一次，过了今日目标小时且今天还没签到过就会执行（自动追赶漏签）
 if (shouldRunNow()) {
     markRanToday(new Date());
     startTasks().then(r => $.done());

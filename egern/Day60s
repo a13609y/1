@@ -1,0 +1,128 @@
+/******************************
+脚本名称: 每日60S
+Version : v1.2.0
+平台: Egern
+功能: 每日60秒读懂世界（定时通知）
+API: viki 静态 CDN（按日期取 JSON，稳定可靠）
+固定显示 15 条新闻
+*******************************/
+
+const SCRIPT_NAME = "每日60S";
+const TITLE_MAIN = "每日60S · 读懂世界 💭";
+const MAX_NEWS = 15;
+
+// 按日期拼接静态 JSON，多个 CDN 互为备用
+function buildUrls(dateStr) {
+  return [
+    `https://60s-static.viki.moe/60s/${dateStr}.json`,
+    `https://cdn.jsdmirror.com/gh/vikiboss/60s-static-host@main/static/60s/${dateStr}.json`,
+    `https://cdn.jsdelivr.net/gh/vikiboss/60s-static-host@main/static/60s/${dateStr}.json`,
+  ];
+}
+
+function todayStr() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function log(msg) {
+  console.log(`[${SCRIPT_NAME}] ${msg}`);
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function stripLeadingIndex(text) {
+  return String(text || "")
+    .replace(/^\s*\d+\s*[\.．、:：]\s*/u, "")
+    .trim();
+}
+
+function buildBody(newsList, tip) {
+  const lines = newsList.map((item, i) => {
+    const s = typeof item === "string" ? item : (item && (item.title || item.text)) || String(item);
+    return `${i + 1}. ${stripLeadingIndex(s)}`;
+  });
+  if (tip) {
+    lines.push("");
+    lines.push("【微语】" + String(tip).replace(/^\s*【\s*微语\s*】\s*/u, "").trim());
+  }
+  return lines.join("\n") || "暂无新闻";
+}
+
+
+
+async function fetchJson(ctx, url) {
+  const resp = await ctx.http.get(url, {
+    headers: { Accept: "application/json", "User-Agent": "Egern-60s/1.2.0" },
+    timeout: 20000,
+  });
+  if (!(resp.status >= 200 && resp.status < 300)) throw new Error(`HTTP ${resp.status}`);
+  const text = await resp.text();
+  return JSON.parse(text);
+}
+
+async function load60s(ctx, date) {
+  const urls = buildUrls(date);
+  let lastErr;
+  for (const url of urls) {
+    try {
+      log(`请求: ${url}`);
+      const json = await fetchJson(ctx, url);
+      if (json && (json.news || json.data)) return json;
+      lastErr = new Error("返回数据异常");
+    } catch (e) {
+      lastErr = e;
+      log(`失败: ${e && e.message ? e.message : e}`);
+    }
+  }
+  throw lastErr || new Error("全部接口失败");
+}
+
+function notifyWithCtx(ctx, title, subtitle, body) {
+  console.log(`📢 ${title} - ${subtitle}`);
+  const payload = { title, subtitle, body, sound: true };
+  if (ctx && typeof ctx.notify === "function") {
+    try { return ctx.notify(payload); } catch (_) {}
+  }
+  if (typeof $notification !== "undefined" && $notification.post) {
+    try { $notification.post(title, subtitle, body); } catch (_) {}
+  }
+}
+
+async function main(ctx) {
+  const date = todayStr();
+  log(`开始获取 ${date}`);
+
+  try {
+    const json = await load60s(ctx, date);
+
+    // 静态 JSON 直接就是 data 字段，或本身就是 data
+    const data = json.data || json;
+    const news = (data.news || []).slice(0, MAX_NEWS);
+    const tip = data.tip || "";
+    const lunar = data.lunar_date || data.lunarDate || "";
+    const dow = data.day_of_week || data.dayOfWeek || "";
+
+    const subtitleParts = [date, dow].filter(Boolean);
+    let subtitle = subtitleParts.join("  ");
+    if (subtitle && lunar) subtitle += `  ·  ${lunar}`;
+    else if (lunar) subtitle = lunar;
+    else subtitle = subtitle || "读懂世界";
+
+    const body = buildBody(news, tip);
+
+    notifyWithCtx(ctx, TITLE_MAIN, subtitle, body);
+
+    log("推送完成");
+  } catch (err) {
+    log(`失败: ${err && err.message ? err.message : err}`);
+    notifyWithCtx(ctx, TITLE_MAIN, "获取失败", String(err && err.message ? err.message : err).slice(0, 200));
+  }
+}
+
+export default main;

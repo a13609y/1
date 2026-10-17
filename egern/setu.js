@@ -27,6 +27,8 @@ export default async function(ctx) {
 
   const rawCooldown = parseInt(ctx.env.COOLDOWN || '5');
   const cooldown    = rawCooldown === 0 ? 0 : Math.max(1, rawCooldown) * 60 * 1000;
+  // 请求 iOS 在冷却时间后刷新；WidgetKit 实际刷新时机仍由系统决定。
+  const refreshAfter = new Date(Date.now() + (cooldown > 0 ? cooldown : 60 * 60 * 1000)).toISOString();
 
   const tagList = keywords.split('|').map(t => t.trim()).filter(Boolean);
   const keyword = tagList.join('|'); // 所有标签 OR 搜索
@@ -59,7 +61,7 @@ export default async function(ctx) {
   // ── 冷却期内直接用缓存 ─────────────────────────────────────
   if (!shouldAdvance) {
     const current = ctx.storage.getJSON(currentKey);
-    if (current?.base64) return buildWidget(current.url, current.base64);
+    if (current?.base64) return buildWidget(current.url, current.base64, refreshAfter);
   }
 
   // ── 工具：拉 batch 个 URL ──────────────────────────────────
@@ -137,8 +139,8 @@ export default async function(ctx) {
   // ── 请求失败，降级用旧缓存 ─────────────────────────────────
   if (!picUrl) {
     const old = ctx.storage.getJSON(currentKey);
-    if (old?.base64) return buildWidget(old.url, old.base64);
-    return buildErrorWidget(lastError || '请求失败');
+    if (old?.base64) return buildWidget(old.url, old.base64, refreshAfter);
+    return buildErrorWidget(lastError || '请求失败', refreshAfter);
   }
 
   // ── 下载图片 ───────────────────────────────────────────────
@@ -147,8 +149,8 @@ export default async function(ctx) {
     base64 = await downloadBase64(picUrl);
   } catch (e) {
     const old = ctx.storage.getJSON(currentKey);
-    if (old?.base64) return buildWidget(old.url, old.base64);
-    return buildErrorWidget(e.message || '图片下载失败');
+    if (old?.base64) return buildWidget(old.url, old.base64, refreshAfter);
+    return buildErrorWidget(e.message || '图片下载失败', refreshAfter);
   }
 
   // ── 写入缓存、history、时间戳 ─────────────────────────────
@@ -156,12 +158,13 @@ export default async function(ctx) {
   addToHistory(picUrl);
   ctx.storage.set(lastShowKey, String(Date.now()));
 
-  return buildWidget(picUrl, base64);
+  return buildWidget(picUrl, base64, refreshAfter);
 }
 
-function buildWidget(url, base64) {
+function buildWidget(url, base64, refreshAfter) {
   return {
     type: 'widget',
+    refreshAfter,
     backgroundImage: `data:image/jpeg;base64,${base64}`,
     padding: 0,
     url,
@@ -169,9 +172,10 @@ function buildWidget(url, base64) {
   };
 }
 
-function buildErrorWidget(message) {
+function buildErrorWidget(message, refreshAfter) {
   return {
     type: 'widget',
+    refreshAfter,
     backgroundColor: '#1C1C1E',
     padding: 16,
     gap: 8,

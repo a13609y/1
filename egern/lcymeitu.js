@@ -28,13 +28,16 @@ export default async function(ctx) {
     return { type: 'widget', children: [{ type: 'text', text: '栗次元美图', maxLines: 1 }] };
   }
 
-  // pc 为横图专用接口；其余分类均为方图。
+  // 适配手机 Widget：中号横图约 1024px 宽；方形组件约 900px，避免原图过重又保留高分辨率。
+  const imageWidth = family === 'systemMedium' ? 1024 : 900;
   const sources = family === 'systemMedium'
     ? ['pc']
     : ['tx', 'ys', 'fj', 'moe', 'miku', 'ycy'];
-  const currentKey = `alcy_current_${family}`;
-  const lastShowKey = `alcy_lastshow_${family}`;
-  const historyKey = `alcy_history_${family}`;
+  // 所有持久化键统一使用独立前缀，避免与旧版 setu_* 键冲突。
+  const storagePrefix = 'alcy_widget_v1';
+  const currentKey = `${storagePrefix}_current_${family}`;
+  const lastShowKey = `${storagePrefix}_lastshow_${family}`;
+  const historyKey = `${storagePrefix}_history_${family}`;
   let history = [];
   try { history = JSON.parse(ctx.storage.get(historyKey) || '[]'); } catch (_) {}
   const historySet = new Set(history);
@@ -61,7 +64,7 @@ export default async function(ctx) {
   for (let i = 0; i < batch; i++) {
     const source = sources[Math.floor(Math.random() * sources.length)];
     // 随机参数避免 CDN/客户端复用上次的 302/图片响应
-    urls.push(`https://t.alcy.cc/${source}?_t=${Date.now()}_${i}_${Math.random()}`);
+    urls.push(`https://t.alcy.cc/${source}?w=${imageWidth}&_t=${Date.now()}_${i}_${Math.random()}`);
   }
   const filtered = urls.filter(url => !historySet.has(url));
   const candidates = filtered.length ? filtered : urls;
@@ -90,7 +93,7 @@ function buildWidget(url, base64, refreshAfter) {
   return {
     type: 'widget',
     refreshAfter,
-    backgroundImage: `data:image/jpeg;base64,${base64}`,
+    backgroundImage: `data:image/webp;base64,${base64}`,
     padding: 0,
     url,
     children: []

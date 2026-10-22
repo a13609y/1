@@ -28,8 +28,8 @@ export default async function(ctx) {
     return { type: 'widget', children: [{ type: 'text', text: '栗次元美图', maxLines: 1 }] };
   }
 
-  // 适配手机 Widget：中号横图约 1024px 宽；方形组件约 900px，避免原图过重又保留高分辨率。
-  const imageWidth = family === 'systemMedium' ? 1024 : 900;
+  // 手机 Widget 高清档：中号横图 1440px；方形组件 1200px。
+  const imageWidth = family === 'systemMedium' ? 1440 : 1200;
   const sources = family === 'systemMedium'
     ? ['pc']
     : ['tx', 'ys', 'fj', 'moe', 'miku', 'ycy'];

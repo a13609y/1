@@ -28,8 +28,8 @@ export default async function(ctx) {
     return { type: 'widget', children: [{ type: 'text', text: '栗次元美图', maxLines: 1 }] };
   }
 
-  // 方图组件使用约 1000px，降低大号组件解码/缓存负担；中号横图保持已验证的 1800px。
-  const imageWidth = family === 'systemMedium' ? 1800 : 1000;
+  // 稳定优先：中号横图下调为 1200px；方图沿用已验证可用的 1000px。
+  const imageWidth = family === 'systemMedium' ? 1200 : 1000;
   const sources = family === 'systemMedium'
     ? ['pc']
     : ['tx', 'ys', 'fj', 'moe', 'miku', 'ycy'];

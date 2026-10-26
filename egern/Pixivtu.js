@@ -25,7 +25,9 @@
  * PIXIV_WORD     搜索词，优先级最高
  * WORD_MODE      s_tag（默认，标签模糊）| s_tag_full（标签精确）| s_tc（标题简介）
  * ORDER          date_d（最新，默认）| popular_d（热门，免登录会退化）
- * TYPE           all（默认）| illust | manga
+ * TYPE           illust（默认，只要插画）| manga | all
+ *                注意：Pixiv 的 type 查询参数实测无效（total 不变），所以是本地按 illustType 过滤
+ *                illustType：0 = 插画，1 = 漫画，2 = 动图（一律跳过）
  * MAX_PAGE       游标最多翻到第几页就回卷，默认 3                （见 README「会不会重复」）
  * EXCLUDE_TAGS   要排除的标签，多个用 | 或 , 分隔（不区分大小写的包含匹配）
  *                例如：漫画|R-18G|原创  —— 命中任意一个就整张跳过
@@ -232,7 +234,7 @@ function readConfig(env) {
     tags: list('TAGS', 10),
     wordMode: oneOf('WORD_MODE', 's_tag', ['s_tag', 's_tag_full', 's_tc']),
     order: oneOf('ORDER', 'date_d', ['date_d', 'popular_d', 'popular_male_d', 'popular_female_d']),
-    type: oneOf('TYPE', 'all', ['all', 'illust', 'manga']),
+    type: oneOf('TYPE', 'illust', ['illust', 'manga', 'all']),
     maxPage: int('MAX_PAGE', 3, 1, 1000),
     aiMode: oneOf('AI_MODE', 'any', ['any', 'only', 'exclude']),
     excludeTags: list('EXCLUDE_TAGS', 20),
@@ -280,6 +282,7 @@ async function searchPixiv(ctx, cfg, page) {
     let msg = '这一页没有符合条件的作品';
     if (cfg.aiMode === 'only') msg = `「${word}」这一页没有 AI 作品，换个更 AI 向的标签试试（如 AIイラスト）`;
     else if (cfg.excludeTags.length) msg = `这一页的作品都被 EXCLUDE_TAGS 排掉了：${cfg.excludeTags.join('/')}`;
+    else if (cfg.type === 'illust') msg = '这一页只有漫画/动图，已按 TYPE=illust 跳过';
     const err = new Error(msg);
     err.status = 200;
     throw err;
@@ -297,7 +300,7 @@ async function fetchSearchPage(ctx, cfg, word, p) {
     'mode=safe',                        // 固定全年龄
     `p=${p}`,
     `s_mode=${cfg.wordMode}`,
-    `type=${cfg.type}`,
+    'type=all',                        // 服务端 type 参数无效，过滤在本地做
     'lang=zh'
   ].join('&');
 
@@ -324,9 +327,10 @@ async function fetchSearchPage(ctx, cfg, word, p) {
   const raw = Array.isArray(box.data) ? box.data : [];
 
   const items = raw
-    .filter(it => it && it.id && it.url && it.illustType !== 2) // 跳过动图（zip 包）
+    .filter(it => it && it.id && it.url)
     .map(it => ({
       pid: Number(it.id),
+      illustType: it.illustType,
       page: `https://www.pixiv.net/artworks/${it.id}`,
       title: it.title,
       author: it.userName,
@@ -337,7 +341,13 @@ async function fetchSearchPage(ctx, cfg, word, p) {
       ai: it.aiType === 2,           // 2 = 投稿者标注 AI 生成
       url: String(it.url)
     }))
-    .filter(it => /\.(png|jpe?g|gif|webp)$/i.test(it.url.split('?')[0]));
+    .filter(it => /\.(png|jpe?g|gif|webp)$/i.test(it.url.split('?')[0]))
+    .filter(it => {
+      if (it.illustType === 2) return false;              // 动图是 zip，取不出来
+      if (cfg.type === 'illust') return it.illustType === 0;
+      if (cfg.type === 'manga') return it.illustType === 1;
+      return it.illustType === 0 || it.illustType === 1;
+    });
 
   const total = Number(box.total) || 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));

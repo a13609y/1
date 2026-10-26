@@ -52,8 +52,8 @@ export default async function (ctx) {
   function lunarToSolar(year, lunarMonth, lunarDay) {
     const idx = year - 1900;
     const sf = springFestival[idx];
-    if (!sf) return null;
     const info = lunarInfo[idx];
+    if (!sf || info === undefined) return null;
     const leapMonth = (info >> 16) & 0xf;
     let days = 0;
     for (let m = 1; m < lunarMonth; m++) {
@@ -122,8 +122,10 @@ export default async function (ctx) {
 
   // ─── 构建节日列表 ─────────────────────────────────────────────────────────
   function daysUntil(date) {
-    if (!date) return -1;
-    return Math.ceil((new Date(date.getFullYear(), date.getMonth(), date.getDate()) - today) / 86400000);
+    if (!date || Number.isNaN(date.getTime())) return -1;
+    const dateKey = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+    const todayKey = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+    return Math.round((dateKey - todayKey) / 86400000);
   }
 
   const items = [];
@@ -157,6 +159,8 @@ export default async function (ctx) {
   const sorted = items
     .sort((a, b) => a.days - b.days)
     .filter(item => { if (seen.has(item.name)) return false; seen.add(item.name); return true; });
+  // 仅最近一个节日进入 7 天倒计时窗口时高亮
+  const highlightedItem = sorted.length > 0 && sorted[0].days <= 7 ? sorted[0] : null;
 
   // ─── 按 widgetFamily 精确控制布局 ─────────────────────────────────────────
   const family = ctx.widgetFamily || "systemLarge";
@@ -182,7 +186,7 @@ export default async function (ctx) {
 
   const rowChildren = rowDefs.map(row => {
     const cells = row.map(item => {
-      const isUrgent = sorted.indexOf(item) < 2;
+      const isUrgent = item === highlightedItem;
       const daysLabel = item.days === 0 ? "今天" : `还有${item.days}天`;
 
       return {
@@ -191,7 +195,7 @@ export default async function (ctx) {
         direction: "column",
         alignItems: "center",
         backgroundColor: isUrgent ? urgentBg : normalBg,
-        borderRadius: 20,
+        borderRadius: 16,
         padding: c.pad,
         gap: c.innerGap,
         flex: 1,

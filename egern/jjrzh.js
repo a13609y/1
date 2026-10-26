@@ -187,7 +187,10 @@ export default async function (ctx) {
   const rowChildren = rowDefs.map(row => {
     const cells = row.map(item => {
       const isUrgent = item === highlightedItem;
-      const daysLabel = item.days === 0 ? "今天" : `还有${item.days}天`;
+      const daysLabel = item.days === 0 ? "今天"
+        : item.days === 1 ? "明天"
+        : item.days === 2 ? "后天"
+        : `还有${item.days}天`;
 
       return {
         type: "stack",

@@ -26,6 +26,9 @@
  * WORD_MODE      s_tag（默认，标签模糊）| s_tag_full（标签精确）| s_tc（标题简介）
  * ORDER          date_d（最新，默认）| popular_d（热门，免登录会退化）
  * TYPE           all（默认）| illust | manga
+ * MAX_PAGE       游标最多翻到第几页就回卷，默认 3                （见 README「会不会重复」）
+ * AI_MODE        any（默认）| only（只要 AI 生成）| exclude（过滤 AI）
+ *                Pixiv 的 aiType：2 = 投稿者标注的 AI 生成，1 = 非 AI/未标注
  * COOLDOWN       每张图展示时长（分钟），0 = 每次刷新换图   默认 30
  * MAX_HISTORY    本地去重条数                            默认 120
  * IMAGE_QUALITY  auto（默认，小号 540 / 中大号 1200）| master | thumb
@@ -77,7 +80,7 @@ export default async function(ctx) {
   let pool = readJSON(ctx, K.pool) || {};
   if (!Array.isArray(pool.items)) pool.items = [];
   const sig = signature(cfg);
-  // 搜索参数变了、或池子放了 12 小时，都作废重来
+  // 搜索参数变了、或池子闲置超过 12 小时，都作废重来
   if (pool.sig !== sig || !pool.ts || now - pool.ts > 12 * 3600 * 1000) {
     pool = { items: [], ts: now, page: 1, sig };
   }
@@ -85,7 +88,10 @@ export default async function(ctx) {
   let lastError = '';
   let errorStatus = null;
   let candidate = pickFromPool(pool, historySet, family, cfg);
-  if (candidate) writeJSON(ctx, K.pool, pool);
+  if (candidate) {
+    pool.ts = now;                 // 只要还在用就续命，避免剩一半被 TTL 丢掉
+    writeJSON(ctx, K.pool, pool);
+  }
 
   if (!candidate) {
     try {
@@ -150,6 +156,8 @@ export default async function(ctx) {
     pool: pool.items.length,
     page: pool.page,
     aspect: candidate.__aspect || null,
+    ai: !!candidate.ai,
+    aiMode: cfg.aiMode,
     error: lastError || null
   });
 
@@ -195,6 +203,8 @@ function readConfig(env) {
     wordMode: oneOf('WORD_MODE', 's_tag', ['s_tag', 's_tag_full', 's_tc']),
     order: oneOf('ORDER', 'date_d', ['date_d', 'popular_d', 'popular_male_d', 'popular_female_d']),
     type: oneOf('TYPE', 'all', ['all', 'illust', 'manga']),
+    maxPage: int('MAX_PAGE', 3, 1, 1000),
+    aiMode: oneOf('AI_MODE', 'any', ['any', 'only', 'exclude']),
     cooldownMin: int('COOLDOWN', 30, 0, 24 * 60),
     maxHistory: int('MAX_HISTORY', 120, 1, 500),
     quality: oneOf('IMAGE_QUALITY', 'auto', ['auto', 'master', 'thumb']),
@@ -207,7 +217,7 @@ function readConfig(env) {
 }
 
 function signature(cfg) {
-  return [cfg.keyword, cfg.pixivWord, cfg.tags.join(','), cfg.order, cfg.type, cfg.wordMode, cfg.imgHost].join('|');
+  return [cfg.keyword, cfg.pixivWord, cfg.tags.join(','), cfg.order, cfg.type, cfg.wordMode, cfg.imgHost, cfg.maxPage, cfg.aiMode].join('|');
 }
 
 function nextIso(minutes) {
@@ -217,8 +227,36 @@ function nextIso(minutes) {
 /* ============================ 搜索 ============================ */
 
 async function searchPixiv(ctx, cfg, page) {
+  let p = Math.max(1, page | 0);
   const word = cfg.pixivWord || cfg.tags[0] || cfg.keyword || 'オリジナル';
-  const p = Math.max(1, page | 0);
+  // AI 过滤后可能整页都是空的，允许往后多翻 1 页碰运气（最多 2 次请求）
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await fetchSearchPage(ctx, cfg, word, p);
+
+    const pass = res.items.filter(it => {
+      if (cfg.aiMode === 'only') return it.ai;
+      if (cfg.aiMode === 'exclude') return !it.ai;
+      return true;
+    });
+
+    if (pass.length > 0) return { items: pass, page: res.page };
+
+    // 本页被过滤光了：往后翻一页再试，翻不动就报错
+    if (attempt === 0 && p < res.lastPage) { p = p + 1; continue; }
+
+    const err = new Error(cfg.aiMode === 'only'
+      ? `「${word}」这一页没有 AI 作品，换个更 AI 向的标签试试（如 AIイラスト）`
+      : '这一页没有符合条件的作品');
+    err.status = 200;
+    throw err;
+  }
+
+  const err = new Error(`「${word}」没有符合条件的作品`);
+  err.status = 200;
+  throw err;
+}
+
+async function fetchSearchPage(ctx, cfg, word, p) {
   const qs = [
     `word=${encodeURIComponent(word)}`,
     `order=${cfg.order}`,
@@ -262,9 +300,15 @@ async function searchPixiv(ctx, cfg, page) {
       width: it.width,
       height: it.height,
       pageCount: it.pageCount,
+      ai: it.aiType === 2,           // 2 = 投稿者标注 AI 生成
       url: String(it.url)
     }))
     .filter(it => /\.(png|jpe?g|gif|webp)$/i.test(it.url.split('?')[0]));
+
+  const total = Number(box.total) || 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  // 只在最前面若干页里循环：越深的页作品越旧，回卷点用 MAX_PAGE 卡住
+  const lastPage = Math.min(totalPages, cfg.maxPage);
 
   if (items.length === 0) {
     const err = new Error(p === 1 ? `「${word}」在 Pixiv 没有搜索结果` : '该标签已翻到最后一页');
@@ -272,9 +316,7 @@ async function searchPixiv(ctx, cfg, page) {
     throw err;
   }
 
-  const total = Number(box.total) || 0;
-  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  return { items, page: p >= pages ? 1 : p + 1 };
+  return { items, page: p >= lastPage ? 1 : p + 1, lastPage };
 }
 
 async function request(ctx, url, headers, cfg) {
@@ -375,7 +417,8 @@ function imageStem(rawUrl) {
   let path = m[1];
   path = path.replace(/^\/c\/[^/]+\//, '/');   // 去掉 CDN 的 /c/250x250_80_a2/
   path = path.replace('/img-original/', '/img-master/');
-  const fm = /^(.*_p\d+?)(?:_square1200|_master1200)?\.(?:png|jpe?g|gif|webp)$/i.exec(path);
+  path = path.replace('/custom-thumb/', '/img-master/'); // 自定义缩略图的作品，原图仍在 img-master
+  const fm = /^(.*_p\d+?)(?:_square1200|_master1200|_custom1200)?\.(?:png|jpe?g|gif|webp)$/i.exec(path);
   return fm ? fm[1] : null;
 }
 

@@ -27,6 +27,8 @@
  * ORDER          date_d（最新，默认）| popular_d（热门，免登录会退化）
  * TYPE           all（默认）| illust | manga
  * MAX_PAGE       游标最多翻到第几页就回卷，默认 3                （见 README「会不会重复」）
+ * EXCLUDE_TAGS   要排除的标签，多个用 | 或 , 分隔（不区分大小写的包含匹配）
+ *                例如：漫画|R-18G|原创  —— 命中任意一个就整张跳过
  * AI_MODE        any（默认）| only（只要 AI 生成）| exclude（过滤 AI）
  *                Pixiv 的 aiType：2 = 投稿者标注的 AI 生成，1 = 非 AI/未标注
  * COOLDOWN       每张图展示时长（分钟），0 = 每次刷新换图   默认 30
@@ -35,6 +37,7 @@
  * IMG_HOST       图床，默认 i.pixiv.re（大陆可用）
  * ASPECT_FIT     auto（默认，按尺寸挑画幅）| off（纯随机）
  * SHOW_INFO      true/false 图上叠加标题作者              默认 true
+ * DEBUG          true/false 图左下角显示画幅/搜索次数，排障用  默认 false
  * TEXT_COLOR     叠加文字颜色                           默认 #FFFFFF
  * REQUEST_TIMEOUT 单次请求超时（秒）                      默认 15
  * ================================================================ */
@@ -49,7 +52,8 @@ const K = {
 
 const DEFAULT_HOST = 'i.pixiv.re';
 const FALLBACK_HOSTS = ['i.pixiv.re', 'i.pixiv.cat'];
-const PAGE_SIZE = 36; // Pixiv 网页搜索固定每页 36 条
+const PAGE_SIZE = 36;   // Pixiv 网页搜索固定每页 36 条
+const MAX_POOL = 150;   // 候选池上限（只存元数据，很小）
 
 export default async function(ctx) {
   const family = ctx.widgetFamily || 'systemSmall';
@@ -87,23 +91,46 @@ export default async function(ctx) {
 
   let lastError = '';
   let errorStatus = null;
-  let candidate = pickFromPool(pool, historySet, family, cfg);
+  let searches = 0;
+
+  // ① 池里按画幅「严格」挑：区间内没有合适的就算没挑到，不再直接退让
+  let candidate = pickFromPool(pool, historySet, family, cfg, true);
   if (candidate) {
     pool.ts = now;                 // 只要还在用就续命，避免剩一半被 TTL 丢掉
     writeJSON(ctx, K.pool, pool);
   }
 
-  if (!candidate) {
+  // ② 池里没有合适画幅 -> 继续往后翻页补货（同一次刷新最多 2 页）
+  const barren = pool.barrenAt && now - pool.barrenAt < 6 * 3600 * 1000;
+  const hasFresh = () => pool.items.some(it => it && it.url && !historySet.has(it.url));
+  while (!candidate && searches < 2) {
+    // 池子彻底空了必须补货；池里还有货只是画幅不合，且这个标签已被判定画幅贫瘠，就不再白翻
+    if (barren && hasFresh()) break;
     try {
       const res = await searchPixiv(ctx, cfg, pool.page || 1);
-      pool = { items: res.items, ts: now, page: res.page, sig };
+      searches++;
+      pool.items = pool.items.concat(res.items).slice(-MAX_POOL);
+      pool.page = res.page;
+      pool.ts = now;
       writeJSON(ctx, K.pool, pool);
-      candidate = pickFromPool(pool, historySet, family, cfg) || pickByAspect(res.items, family, cfg.aspectFit);
-      writeJSON(ctx, K.pool, pool);
+      candidate = pickFromPool(pool, historySet, family, cfg, true);
     } catch (e) {
       lastError = e.message || '搜索失败';
       errorStatus = e.status || null;
+      break;
     }
+  }
+
+  // ②b 翻了两页还是没有 -> 记一笔，6 小时内不再为画幅额外翻页
+  if (!candidate && searches > 0) {
+    pool.barrenAt = now;
+    writeJSON(ctx, K.pool, pool);
+  }
+
+  // ③ 才退而求其次：池里画幅最接近的新图
+  if (!candidate) {
+    candidate = pickFromPool(pool, historySet, family, cfg, false);
+    if (candidate) writeJSON(ctx, K.pool, pool);
   }
 
   if (!candidate) {
@@ -139,6 +166,8 @@ export default async function(ctx) {
     title: clean(candidate.title),
     author: clean(candidate.author),
     tags: Array.isArray(candidate.tags) ? candidate.tags.slice(0, 8) : [],
+    aspect: candidate.__aspect || null,
+    searches,
     origin: candidate.url,
     url: img.url,
     dataUri: img.dataUri,
@@ -155,6 +184,7 @@ export default async function(ctx) {
     pid: entry.pid,
     pool: pool.items.length,
     page: pool.page,
+    searches,
     aspect: candidate.__aspect || null,
     ai: !!candidate.ai,
     aiMode: cfg.aiMode,
@@ -205,19 +235,21 @@ function readConfig(env) {
     type: oneOf('TYPE', 'all', ['all', 'illust', 'manga']),
     maxPage: int('MAX_PAGE', 3, 1, 1000),
     aiMode: oneOf('AI_MODE', 'any', ['any', 'only', 'exclude']),
+    excludeTags: list('EXCLUDE_TAGS', 20),
     cooldownMin: int('COOLDOWN', 30, 0, 24 * 60),
     maxHistory: int('MAX_HISTORY', 120, 1, 500),
     quality: oneOf('IMAGE_QUALITY', 'auto', ['auto', 'master', 'thumb']),
     imgHost: host,
     aspectFit: s('ASPECT_FIT', 'auto').toLowerCase() !== 'off',
     showInfo: bool('SHOW_INFO', true),
+    debug: bool('DEBUG', false),
     textColor: s('TEXT_COLOR', '#FFFFFF'),
     timeoutMs: int('REQUEST_TIMEOUT', 15, 5, 60) * 1000
   };
 }
 
 function signature(cfg) {
-  return [cfg.keyword, cfg.pixivWord, cfg.tags.join(','), cfg.order, cfg.type, cfg.wordMode, cfg.imgHost, cfg.maxPage, cfg.aiMode].join('|');
+  return [cfg.keyword, cfg.pixivWord, cfg.tags.join(','), cfg.order, cfg.type, cfg.wordMode, cfg.imgHost, cfg.maxPage, cfg.aiMode, cfg.excludeTags.join(',')].join('|');
 }
 
 function nextIso(minutes) {
@@ -234,8 +266,9 @@ async function searchPixiv(ctx, cfg, page) {
     const res = await fetchSearchPage(ctx, cfg, word, p);
 
     const pass = res.items.filter(it => {
-      if (cfg.aiMode === 'only') return it.ai;
-      if (cfg.aiMode === 'exclude') return !it.ai;
+      if (cfg.aiMode === 'only' && !it.ai) return false;
+      if (cfg.aiMode === 'exclude' && it.ai) return false;
+      if (isExcluded(it, cfg.excludeTags)) return false;
       return true;
     });
 
@@ -244,9 +277,10 @@ async function searchPixiv(ctx, cfg, page) {
     // 本页被过滤光了：往后翻一页再试，翻不动就报错
     if (attempt === 0 && p < res.lastPage) { p = p + 1; continue; }
 
-    const err = new Error(cfg.aiMode === 'only'
-      ? `「${word}」这一页没有 AI 作品，换个更 AI 向的标签试试（如 AIイラスト）`
-      : '这一页没有符合条件的作品');
+    let msg = '这一页没有符合条件的作品';
+    if (cfg.aiMode === 'only') msg = `「${word}」这一页没有 AI 作品，换个更 AI 向的标签试试（如 AIイラスト）`;
+    else if (cfg.excludeTags.length) msg = `这一页的作品都被 EXCLUDE_TAGS 排掉了：${cfg.excludeTags.join('/')}`;
+    const err = new Error(msg);
     err.status = 200;
     throw err;
   }
@@ -359,31 +393,41 @@ function targetAspect(family) {
   }
 }
 
-// 各尺寸接受的画幅区间，先硬筛再算最近邻
-function aspectBand(family) {
+// 画幅档位：按「优先顺序」排，前面的档位有货就不看后面的
+// 中号/超大号：横图 → 方图/近方图 → 其余（宁可方图也不要竖图）
+// 小号/大号：方图 → 近方图 → 其余
+function aspectTiers(family) {
   switch (family) {
     case 'systemMedium':
     case 'systemExtraLarge':
-      return [1.4, 99];
+      return [[1.4, 99], [0.85, 1.4]];
     default:
-      return [0.62, 1.45];
+      return [[0.8, 1.25], [0.62, 1.45]];
   }
 }
 
-function pickByAspect(items, family, aspectFit) {
+function pickByAspect(items, family, aspectFit, strict) {
   if (!items || items.length === 0) return null;
   if (!aspectFit) return items[Math.floor(Math.random() * items.length)];
 
-  const band = aspectBand(family);
-  const lo = band[0], hi = band[1];
   const target = targetAspect(family);
+  const tiers = aspectTiers(family);
   const scored = items.map(it => {
     const ar = (it.width && it.height) ? it.width / it.height : 0;
     return { it, ar, score: ar > 0 ? Math.abs(Math.log(ar / target)) : 1 };
   });
 
-  const inBand = scored.filter(x => x.ar >= lo && x.ar <= hi);
-  const base = inBand.length ? inBand : scored;
+  // 找第一个有货的档位
+  let base = null;
+  let tierIdx = 0;
+  for (let i = 0; i < tiers.length; i++) {
+    const t = scored.filter(x => x.ar >= tiers[i][0] && x.ar <= tiers[i][1]);
+    if (t.length) { base = t; tierIdx = i; break; }
+  }
+  if (!base) { base = scored; tierIdx = tiers.length; }
+
+  // strict：只认第一档（横图），没有就换页再找，不往下将就
+  if (strict && tierIdx > 0) return null;
 
   base.sort((a, b) => a.score - b.score);
   const limit = Math.max(0.1, base[0].score + 0.15);
@@ -393,19 +437,35 @@ function pickByAspect(items, family, aspectFit) {
   picked.it.__aspect = {
     target,
     ar: picked.ar ? +picked.ar.toFixed(2) : null,
-    band: inBand.length ? 'in' : 'relaxed'
+    band: tierIdx === 0 ? 'in' : (tierIdx === 1 ? 'near' : 'relaxed')
   };
   return picked.it;
 }
 
-function pickFromPool(pool, historySet, family, cfg) {
+function pickFromPool(pool, historySet, family, cfg, strict) {
   if (!pool || !Array.isArray(pool.items) || pool.items.length === 0) return null;
   const fresh = pool.items.filter(it => it && it.url && !historySet.has(it.url));
   if (fresh.length === 0) return null;
 
-  const picked = pickByAspect(fresh, family, cfg.aspectFit);
+  const picked = pickByAspect(fresh, family, cfg.aspectFit, strict);
+  if (!picked) return null;
   pool.items = pool.items.filter(it => it !== picked);
   return picked;
+}
+
+/* ========================= 标签排除 ========================= */
+
+// 作品任一标签包含排除词就整张跳过（不区分大小写）
+function isExcluded(item, excludes) {
+  if (!excludes || excludes.length === 0) return false;
+  const tags = Array.isArray(item.tags) ? item.tags : [];
+  for (const kw of excludes) {
+    const q = kw.toLowerCase();
+    for (const t of tags) {
+      if (String(t).toLowerCase().indexOf(q) >= 0) return true;
+    }
+  }
+  return false;
 }
 
 /* ========================= 图片地址推导 ======================= */
@@ -533,6 +593,16 @@ function buildWidget(entry, family, cfg, refreshAfter) {
         minScale: 0.75
       });
     }
+    if (cfg.debug && entry.aspect) {
+      lines.push({
+        type: 'text',
+        text: `ar ${entry.aspect.ar || '-'}/${entry.aspect.target} · ${entry.aspect.band} · p${entry.searches || 0}`,
+        font: { size: 'caption2' },
+        textColor: 'rgba(255,255,255,0.55)',
+        maxLines: 1
+      });
+    }
+
     children.push({ type: 'spacer' });
     children.push({
       type: 'stack',

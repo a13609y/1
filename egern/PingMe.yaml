@@ -1,0 +1,86 @@
+name: PingMe自动化任务
+description: PingMe 自动签到 + 看视频得奖励（已拆分，各自独立 cron，可单独开关）
+author: 怎么肥事 & yaowuliu
+icon: https://raw.githubusercontent.com/axhani/icon/refs/heads/main/pingme&wetalk.png
+homepage: https://github.com/a13609y/1/tree/main/egern
+
+compat_arguments:
+  CAPTURE_ENABLED: false
+  SIGN_DISABLED: false
+  VIDEO_DISABLED: false
+  CRON_SIGN: "30 4-23 * * *"
+  SIGN_TIMEOUT: 300
+  CRON_VIDEO: "20 20 * * *"
+  VIDEO_TIMEOUT: 300
+
+compat_arguments_schema:
+  CAPTURE_ENABLED:
+    name: "禁用账号抓取"
+    description: "开启后抓包脚本不再处理任何请求（装好后正常使用时不要再开）"
+    options:
+      - true
+      - false
+    default_value: false
+
+  SIGN_DISABLED:
+    name: "关闭自动签到"
+    description: "开启后只跑看视频得奖励，不执行签到"
+    options:
+      - true
+      - false
+    default_value: false
+
+  VIDEO_DISABLED:
+    name: "关闭看视频奖励"
+    description: "开启后只跑签到，不执行看视频得奖励"
+    options:
+      - true
+      - false
+    default_value: false
+
+  CRON_SIGN:
+    name: "签到 cron"
+    description: "签到脚本的触发时间（5 段标准 cron）。脚本内部有滚动签到小时 + 当天追赶制，每次触发只会让每个账号真正签到一次，所以默认用 4~23 点每小时触发一次来兜住漏签。想固定每天一个时间，可改成例如 35 23 * * *（必须晚于当天目标签到时刻，最晚 23:30）"
+    default_value: "30 4-23 * * *"
+
+  SIGN_TIMEOUT:
+    name: "签到超时时间"
+    description: "签到脚本单次运行超时（秒）"
+    default_value: 300
+
+  CRON_VIDEO:
+    name: "看视频 cron"
+    description: "看视频得奖励脚本的触发时间（5 段标准 cron），默认每天 20:20 跑一次，每次循环 5 个视频"
+    default_value: "20 20 * * *"
+
+  VIDEO_TIMEOUT:
+    name: "看视频超时时间"
+    description: "看视频脚本单次运行超时（秒）"
+    default_value: 300
+
+scriptings:
+  - http_request:
+      name: "账号抓取"
+      match: "^https://api[.]pingmeapp[.]net/app/queryBalanceAndBonus"
+      script_url: "https://raw.githubusercontent.com/a13609y/1/refs/heads/main/egern/pingme-capture.js"
+      timeout: 10
+      disabled: {{{CAPTURE_ENABLED}}}
+
+  - schedule:
+      name: "自动签到"
+      cron: "{{{CRON_SIGN}}}"
+      script_url: "https://raw.githubusercontent.com/a13609y/1/refs/heads/main/egern/pingme-sign.js"
+      timeout: {{{SIGN_TIMEOUT}}}
+      disabled: {{{SIGN_DISABLED}}}
+
+  - schedule:
+      name: "看视频得奖励"
+      cron: "{{{CRON_VIDEO}}}"
+      script_url: "https://raw.githubusercontent.com/a13609y/1/refs/heads/main/egern/pingme-video.js"
+      timeout: {{{VIDEO_TIMEOUT}}}
+      disabled: {{{VIDEO_DISABLED}}}
+
+mitm:
+  hostnames:
+    - api.pingmeapp.net
+
